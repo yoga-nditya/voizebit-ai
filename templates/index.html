@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Quotation Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    * { box-sizing: border-box; font-family: Inter, sans-serif; }
+    body { margin: 0; background: #ffffff; }
+    
+    .landing-bg {
+      background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+    }
+    
+    .menu-card {
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    
+    .menu-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+    }
+    
+    .msg { animation: slideIn 0.2s ease-out; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .recording { animation: pulse 1.5s infinite; }
+    
+    @keyframes wave {
+      0%, 100% { transform: scaleY(1); }
+      50% { transform: scaleY(1.5); }
+    }
+    .voice-wave {
+      display: inline-block;
+      width: 3px;
+      height: 12px;
+      margin: 0 1px;
+      background: #ef4444;
+      animation: wave 0.8s ease-in-out infinite;
+    }
+    .voice-wave:nth-child(2) { animation-delay: 0.1s; }
+    .voice-wave:nth-child(3) { animation-delay: 0.2s; }
+    .voice-wave:nth-child(4) { animation-delay: 0.3s; }
+    
+    .custom-scroll::-webkit-scrollbar { width: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    
+    .hidden { display: none !important; }
+    
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .stagger-1 { animation: fadeInUp 0.4s ease-out 0.1s both; }
+    .stagger-2 { animation: fadeInUp 0.4s ease-out 0.2s both; }
+    .stagger-3 { animation: fadeInUp 0.4s ease-out 0.3s both; }
+    .stagger-4 { animation: fadeInUp 0.4s ease-out 0.4s both; }
+  </style>
+</head>
+<body>
+  <!-- LANDING -->
+  <div id="landingSection" class="landing-bg min-h-screen flex flex-col">
+    <div class="flex-1 flex items-center justify-center p-4">
+      <div class="w-full max-w-3xl">
+        <div class="text-center mb-12">
+          <h1 class="text-4xl md:text-5xl font-semibold text-gray-900 mb-3">
+            Bagaimana saya<br>bisa membantu<br>Anda hari ini!
+          </h1>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 mb-8">
+          <div class="menu-card bg-white rounded-2xl p-6 border border-gray-200 shadow-sm stagger-1">
+            <div class="flex flex-col items-center text-center">
+              <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mb-3">
+                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <h3 class="text-base font-semibold text-gray-900 mb-1">Membuat Invoice</h3>
+              <p class="text-xs text-gray-600">Generate invoice transaksi</p>
+            </div>
+          </div>
+          
+          <div class="menu-card bg-white rounded-2xl p-6 border border-gray-200 shadow-sm stagger-2">
+            <div class="flex flex-col items-center text-center">
+              <div class="w-12 h-12 rounded-xl bg-indigo-100 flex items-center justify-center mb-3">
+                <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                </svg>
+              </div>
+              <h3 class="text-base font-semibold text-gray-900 mb-1">Membuat Penawaran</h3>
+              <p class="text-xs text-gray-600">Buat dokumen quotation</p>
+            </div>
+          </div>
+          
+          <div class="menu-card bg-white rounded-2xl p-6 border border-gray-200 shadow-sm stagger-3">
+            <div class="flex flex-col items-center text-center">
+              <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center mb-3">
+                <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h3 class="text-base font-semibold text-gray-900 mb-1">Membuat Berita Acara</h3>
+              <p class="text-xs text-gray-600">Generate berita acara</p>
+            </div>
+          </div>
+          
+          <div class="menu-card bg-white rounded-2xl p-6 border border-gray-200 shadow-sm stagger-4">
+            <div class="flex flex-col items-center text-center">
+              <div class="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center mb-3">
+                <svg class="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <h3 class="text-base font-semibold text-gray-900 mb-1">Membuat Kontrak</h3>
+              <p class="text-xs text-gray-600">Buat dokumen kontrak</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="stagger-4">
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-3">
+            <div id="voiceHintLanding" class="hidden text-xs text-gray-500 mb-2">
+              🎤 <span id="voiceHintTextLanding">Mendengarkan...</span>
+            </div>
+            
+            <div class="flex gap-2">
+              <textarea id="inputLanding" class="flex-1 min-h-[44px] max-h-[120px] resize-none px-3 py-2 text-sm border-0 focus:outline-none focus:ring-0 bg-transparent" placeholder="Tanya apapun..."></textarea>
+              <button id="voiceBtnLanding" class="p-2 hover:bg-gray-100 rounded-lg transition">🎤</button>
+              <button id="sendBtnLanding" class="px-4 py-2 bg-black text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition">Kirim</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHAT MODE -->
+  <div id="chatSection" class="hidden h-screen flex flex-col bg-white">
+    <!-- Header -->
+    <div class="flex-shrink-0 border-b border-gray-200 bg-white">
+      <div class="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+        <button onclick="backToHome()" class="p-2 hover:bg-gray-100 rounded-lg transition">
+          <svg class="w-5 h-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+        </button>
+        <div class="flex-1">
+          <div class="font-semibold text-gray-900 text-sm">Quotation Generator</div>
+        </div>
+        <div id="voiceStatus" class="hidden items-center gap-1 text-xs text-red-600">
+          <span class="voice-wave"></span>
+          <span class="voice-wave"></span>
+          <span class="voice-wave"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chat Container -->
+    <div class="flex-1 overflow-y-auto custom-scroll">
+      <div id="chat" class="max-w-3xl mx-auto px-4 py-6"></div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="flex-shrink-0 border-t border-gray-200 bg-white">
+      <div class="max-w-3xl mx-auto px-4 py-4">
+        <div id="voiceHint" class="hidden text-xs text-gray-500 mb-2">
+          🎤 <span id="voiceHintText">Mendengarkan...</span>
+        </div>
+        
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-3">
+          <div class="flex gap-2">
+            <textarea id="input" class="flex-1 min-h-[44px] max-h-[120px] resize-none px-3 py-2 text-sm border-0 focus:outline-none focus:ring-0 bg-transparent" placeholder="Ketik pesan..."></textarea>
+            <button id="voiceBtn" class="p-2 hover:bg-gray-100 rounded-lg transition">🎤</button>
+            <button id="sendBtn" class="px-4 py-2 bg-black text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition">Kirim</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview Modal -->
+  <div id="docPreviewModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="closePreview(event)">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+      <div class="flex items-center justify-between p-4 border-b">
+        <h3 class="font-semibold text-gray-900" id="previewTitle">Document Preview</h3>
+        <button onclick="closePreview()" class="p-2 hover:bg-gray-100 rounded-lg transition">
+          <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      
+      <div class="flex-1 overflow-hidden">
+        <iframe id="docPreviewFrame" class="w-full h-full" style="min-height: 400px;"></iframe>
+      </div>
+      
+      <div class="p-4 border-t bg-gray-50 flex gap-3">
+        <a id="downloadDocxBtn" href="#" download class="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition text-sm font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          DOCX
+        </a>
+        <a id="downloadPdfBtn" href="#" download class="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition text-sm font-medium">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+          </svg>
+          PDF
+        </a>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    const landingSection = document.getElementById('landingSection');
+    const chatSection = document.getElementById('chatSection');
+    const chat = document.getElementById('chat');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+    const voiceBtn = document.getElementById('voiceBtn');
+    const inputLanding = document.getElementById('inputLanding');
+    const sendBtnLanding = document.getElementById('sendBtnLanding');
+    const voiceBtnLanding = document.getElementById('voiceBtnLanding');
+    const voiceStatus = document.getElementById('voiceStatus');
+    const voiceHint = document.getElementById('voiceHint');
+    const voiceHintText = document.getElementById('voiceHintText');
+    const voiceHintLanding = document.getElementById('voiceHintLanding');
+    const voiceHintTextLanding = document.getElementById('voiceHintTextLanding');
+    
+    let recognition = null;
+    let isRecording = false;
+    let interimTranscript = '';
+    let isInChatMode = false;
+    
+    function switchToChatMode() {
+      landingSection.classList.add('hidden');
+      chatSection.classList.remove('hidden');
+      isInChatMode = true;
+      
+      // Add welcome message
+      addMsg('👋 Halo! Saya siap membantu Anda membuat quotation. Silakan mulai dengan mengetik "Buatkan quotation" atau gunakan voice input.', 'assistant');
+      
+      input.focus();
+    }
+    
+    function backToHome() {
+      chatSection.classList.add('hidden');
+      landingSection.classList.remove('hidden');
+      isInChatMode = false;
+      chat.innerHTML = '';
+      input.value = '';
+      inputLanding.value = '';
+      inputLanding.focus();
+    }
+    
+    function processVoiceText(text) {
+      let processed = text;
+      const replacements = {
+        'minus': '-', 'min': '-', 'strip': '-', 'dash': '-',
+        'sampai': '-', 'hingga': '-', 'garis': '-',
+        'nol': '0', 'satu': '1', 'dua': '2', 'tiga': '3',
+        'empat': '4', 'lima': '5', 'enam': '6', 'tujuh': '7',
+        'delapan': '8', 'sembilan': '9'
+      };
+      
+      for (const [word, replacement] of Object.entries(replacements)) {
+        const regex = new RegExp('\\b' + word + '\\b', 'gi');
+        processed = processed.replace(regex, replacement);
+      }
+      
+      processed = processed.replace(/\s+/g, ' ').trim();
+      processed = processed.replace(/\s*-\s*/g, '-');
+      
+      return processed;
+    }
+    
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SR();
+      
+      recognition.lang = 'id-ID';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
+      
+      recognition.onstart = () => {
+        isRecording = true;
+        interimTranscript = '';
+        
+        if (isInChatMode) {
+          voiceBtn.classList.add('recording', 'bg-red-50');
+          voiceBtn.textContent = '🔴';
+          voiceStatus.classList.remove('hidden');
+          voiceStatus.classList.add('flex');
+          voiceHint.classList.remove('hidden');
+          voiceHintText.textContent = 'Mendengarkan...';
+        } else {
+          voiceBtnLanding.classList.add('recording', 'bg-red-50');
+          voiceBtnLanding.textContent = '🔴';
+          voiceHintLanding.classList.remove('hidden');
+          voiceHintTextLanding.textContent = 'Mendengarkan...';
+        }
+      };
+      
+      recognition.onresult = (e) => {
+        interimTranscript = '';
+        let finalTranscript = '';
+        
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const transcript = e.results[i][0].transcript;
+          
+          if (e.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+        
+        if (interimTranscript) {
+          if (isInChatMode) {
+            voiceHintText.textContent = `📝 "${interimTranscript}"`;
+          } else {
+            voiceHintTextLanding.textContent = `📝 "${interimTranscript}"`;
+          }
+        }
+        
+        if (finalTranscript) {
+          const processedText = processVoiceText(finalTranscript);
+          
+          if (!isInChatMode) {
+            switchToChatMode();
+          }
+          
+          addMsg(processedText, 'user');
+          sendMessage(processedText);
+        }
+      };
+      
+      recognition.onerror = (event) => {
+        let errorMsg = 'Error: ';
+        switch(event.error) {
+          case 'no-speech':
+            errorMsg += 'Tidak ada suara terdeteksi.';
+            break;
+          case 'audio-capture':
+            errorMsg += 'Mikrofon tidak tersedia.';
+            break;
+          case 'not-allowed':
+            errorMsg += 'Izin mikrofon ditolak.';
+            break;
+          default:
+            errorMsg += 'Voice input error.';
+        }
+        
+        if (isInChatMode) {
+          voiceHintText.textContent = errorMsg;
+        } else {
+          voiceHintTextLanding.textContent = errorMsg;
+        }
+      };
+      
+      recognition.onend = () => {
+        isRecording = false;
+        
+        if (isInChatMode) {
+          voiceBtn.classList.remove('recording', 'bg-red-50');
+          voiceBtn.textContent = '🎤';
+          voiceStatus.classList.add('hidden');
+          setTimeout(() => voiceHint.classList.add('hidden'), 2000);
+        } else {
+          voiceBtnLanding.classList.remove('recording', 'bg-red-50');
+          voiceBtnLanding.textContent = '🎤';
+          setTimeout(() => voiceHintLanding.classList.add('hidden'), 2000);
+        }
+      };
+    }
+    
+    function addMsg(text, who = 'assistant') {
+      const div = document.createElement('div');
+      div.className = `msg mb-6 ${who === 'user' ? 'flex justify-end' : ''}`;
+      
+      const bubble = document.createElement('div');
+      bubble.className = `px-4 py-3 rounded-2xl text-sm max-w-[85%] ${
+        who === 'user' 
+          ? 'bg-gray-100 text-gray-900' 
+          : 'bg-white text-gray-900'
+      }`;
+      bubble.innerHTML = text;
+      
+      div.appendChild(bubble);
+      chat.appendChild(div);
+      
+      // Scroll to bottom
+      const chatContainer = document.getElementById('chatSection').querySelector('.overflow-y-auto');
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+    
+    function setLoading(on) {
+      sendBtn.disabled = on;
+      input.disabled = on;
+      if (!isRecording) voiceBtn.disabled = on;
+      
+      if (on) {
+        const load = document.createElement('div');
+        load.id = 'loading';
+        load.className = 'msg mb-6';
+        load.innerHTML = '<div class="bg-white px-4 py-3 rounded-2xl text-sm text-gray-500 max-w-[85%]">⏳ Memproses...</div>';
+        chat.appendChild(load);
+        
+        const chatContainer = document.getElementById('chatSection').querySelector('.overflow-y-auto');
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+      } else {
+        document.getElementById('loading')?.remove();
+      }
+    }
+    
+    function showDocumentPreview(files) {
+      const docxFile = files.find(f => f.type === 'docx');
+      const pdfFile = files.find(f => f.type === 'pdf');
+      
+      const card = document.createElement('div');
+      card.className = 'msg mb-6';
+      
+      card.innerHTML = `
+        <div class="bg-white rounded-2xl border border-gray-200 overflow-hidden max-w-md">
+          <div class="aspect-video bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center cursor-pointer" onclick="openPreview('${pdfFile ? pdfFile.url : docxFile.url}', '${docxFile.filename}', '${docxFile.url}', '${pdfFile ? pdfFile.url : ''}')">
+            <div class="text-center p-6">
+              <svg class="w-16 h-16 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <p class="text-sm font-medium text-gray-900 mb-1">${docxFile.filename}</p>
+              <p class="text-xs text-gray-500">Klik untuk preview</p>
+            </div>
+          </div>
+          
+          <div class="p-4 border-t border-gray-200">
+            <div class="flex gap-2">
+              <button onclick="openPreview('${pdfFile ? pdfFile.url : docxFile.url}', '${docxFile.filename}', '${docxFile.url}', '${pdfFile ? pdfFile.url : ''}')" class="flex-1 px-3 py-2 bg-black text-white text-xs font-medium rounded-lg hover:bg-gray-800 transition">
+                Preview
+              </button>
+              <a href="${docxFile.url}" download="${docxFile.filename}" class="flex-1 px-3 py-2 bg-white border border-gray-300 text-xs font-medium rounded-lg hover:bg-gray-50 transition text-center">
+                DOCX
+              </a>
+              ${pdfFile ? `
+                <a href="${pdfFile.url}" download="${pdfFile.filename}" class="flex-1 px-3 py-2 bg-white border border-gray-300 text-xs font-medium rounded-lg hover:bg-gray-50 transition text-center">
+                  PDF
+                </a>
+              ` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+      
+      chat.appendChild(card);
+      
+      const chatContainer = document.getElementById('chatSection').querySelector('.overflow-y-auto');
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+    
+    function openPreview(previewUrl, docxFilename, docxUrl, pdfUrl) {
+      const modal = document.getElementById('docPreviewModal');
+      const frame = document.getElementById('docPreviewFrame');
+      const title = document.getElementById('previewTitle');
+      const docxBtn = document.getElementById('downloadDocxBtn');
+      const pdfBtn = document.getElementById('downloadPdfBtn');
+      
+      title.textContent = docxFilename;
+      
+      if (previewUrl.endsWith('.pdf')) {
+        frame.src = previewUrl;
+      } else {
+        frame.src = `https://docs.google.com/viewer?url=${encodeURIComponent(window.location.origin + previewUrl)}&embedded=true`;
+      }
+      
+      docxBtn.href = docxUrl;
+      docxBtn.download = docxFilename;
+      
+      if (pdfUrl) {
+        pdfBtn.href = pdfUrl;
+        pdfBtn.download = docxFilename.replace('.docx', '.pdf');
+        pdfBtn.classList.remove('hidden');
+      } else {
+        pdfBtn.classList.add('hidden');
+      }
+      
+      modal.classList.remove('hidden');
+    }
+    
+    function closePreview(event) {
+      if (!event || event.target === event.currentTarget) {
+        const modal = document.getElementById('docPreviewModal');
+        const frame = document.getElementById('docPreviewFrame');
+        modal.classList.add('hidden');
+        frame.src = '';
+      }
+    }
+    
+    async function sendMessage(text) {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
+        const data = await res.json();
+        
+        if (data.error) {
+          addMsg('❌ ' + data.error, 'assistant');
+        } else {
+          addMsg(data.text || 'Tidak ada respon', 'assistant');
+          if (data.files && data.files.length) {
+            showDocumentPreview(data.files);
+          }
+        }
+      } catch (err) {
+        addMsg('❌ Network error: ' + err.message, 'assistant');
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    // Landing handlers
+    sendBtnLanding.addEventListener('click', () => {
+      const text = inputLanding.value.trim();
+      if (!text) return;
+      switchToChatMode();
+      addMsg(text, 'user');
+      inputLanding.value = '';
+      sendMessage(text);
+    });
+    
+    voiceBtnLanding.addEventListener('click', () => {
+      if (!recognition) return;
+      if (isRecording) recognition.stop();
+      else recognition.start().catch(() => {});
+    });
+    
+    inputLanding.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendBtnLanding.click();
+      }
+    });
+    
+    inputLanding.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+    
+    // Chat handlers
+    sendBtn.addEventListener('click', () => {
+      const text = input.value.trim();
+      if (!text) return;
+      addMsg(text, 'user');
+      input.value = '';
+      input.style.height = 'auto';
+      sendMessage(text);
+    });
+    
+    voiceBtn.addEventListener('click', () => {
+      if (!recognition) return;
+      if (isRecording) recognition.stop();
+      else recognition.start().catch(() => {});
+    });
+    
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+    
+    input.addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+    
+    inputLanding.focus();
+  </script>
+</body>
+</html>
