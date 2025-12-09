@@ -427,51 +427,20 @@ def create_docx(data, filename):
         if temp_extract.exists():
             shutil.rmtree(temp_extract)
 
-import subprocess
-
 def create_pdf(filename):
-    """Convert DOCX to PDF using LibreOffice"""
+    if not PDF_AVAILABLE:
+        return None
+    
     docx_path = FILES_DIR / f"{filename}.docx"
     pdf_path = FILES_DIR / f"{filename}.pdf"
     
     try:
-        # Check if LibreOffice is available
-        result = subprocess.run(
-            ['which', 'libreoffice'],
-            capture_output=True,
-            text=True
-        )
+        docx_to_pdf(str(docx_path), str(pdf_path))
         
-        if result.returncode != 0:
-            print("LibreOffice not installed")
-            return None
-        
-        # Convert using LibreOffice
-        cmd = [
-            'libreoffice',
-            '--headless',
-            '--convert-to', 'pdf',
-            '--outdir', str(FILES_DIR),
-            str(docx_path)
-        ]
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if result.returncode == 0 and pdf_path.exists():
-            print(f"PDF created: {pdf_path}")
+        if pdf_path.exists() and pdf_path.stat().st_size > 0:
             return f"{filename}.pdf"
         else:
-            print(f"PDF conversion failed: {result.stderr}")
             return None
-            
-    except subprocess.TimeoutExpired:
-        print("PDF conversion timeout")
-        return None
     except Exception as e:
         print(f"PDF Error: {e}")
         return None
