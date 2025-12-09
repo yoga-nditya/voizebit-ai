@@ -593,12 +593,13 @@ def download(filename):
     return send_from_directory(str(FILES_DIR), filename, as_attachment=True)
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
     print("\n" + "="*60)
     print("🚀 QUOTATION GENERATOR")
     print("="*60)
     print(f"📁 Template: {TEMPLATE_FILE.exists() and '✅ Found' or '❌ Missing'}")
     print(f"🔑 API Key: {OPENROUTER_API_KEY and '✅ Set' or '❌ Not Set'}")
     print(f"📄 PDF: {PDF_AVAILABLE and '✅ Enabled' or '❌ Disabled'}")
-    print(f"🌐 URL: http://localhost:5000")
+    print(f"🌐 Port: {port}")
     print("="*60 + "\n")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
