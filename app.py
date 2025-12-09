@@ -593,7 +593,10 @@ def download(filename):
     return send_from_directory(str(FILES_DIR), filename, as_attachment=True)
 
 if __name__ == "__main__":
+    # Production ready configuration
     port = int(os.getenv("PORT", 5000))
+    debug_mode = os.getenv("FLASK_ENV") != "production"
+    
     print("\n" + "="*60)
     print("🚀 QUOTATION GENERATOR")
     print("="*60)
@@ -601,5 +604,7 @@ if __name__ == "__main__":
     print(f"🔑 API Key: {OPENROUTER_API_KEY and '✅ Set' or '❌ Not Set'}")
     print(f"📄 PDF: {PDF_AVAILABLE and '✅ Enabled' or '❌ Disabled'}")
     print(f"🌐 Port: {port}")
+    print(f"🔧 Debug: {debug_mode}")
     print("="*60 + "\n")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
