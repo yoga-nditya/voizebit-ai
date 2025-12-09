@@ -1,0 +1,34 @@
+# Dockerfile.dev
+FROM python:3.11-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
+
+# Bypass proxy issues dengan menggunakan archive snapshot
+RUN echo "Acquire::http::Pipeline-Depth 0;" > /etc/apt/apt.conf.d/99custom \
+    && echo "Acquire::http::No-Cache true;" >> /etc/apt/apt.conf.d/99custom \
+    && echo "Acquire::BrokenProxy true;" >> /etc/apt/apt.conf.d/99custom \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libreoffice-core \
+      libreoffice-writer \
+      libreoffice-calc \
+      libreoffice-headless \
+      poppler-utils \
+      unzip \
+      zip \
+      fontconfig \
+      fonts-dejavu-core \
+      build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
+
+COPY . /app
+RUN mkdir -p /app/static/files /app/temp
+
+ENV PORT=5000
+EXPOSE 5000
+CMD ["python3", "app.py"]

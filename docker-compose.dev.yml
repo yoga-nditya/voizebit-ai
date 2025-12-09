@@ -1,15 +1,16 @@
-version: "3.8"
+version: '3.8'
+
 services:
-  web:
+  app:
     build:
       context: .
-      dockerfile: Dockerfile
-    command: flask run --host=0.0.0.0 --port=5000
-    volumes:
-      - ./:/app
+      dockerfile: Dockerfile.dev
     ports:
       - "5000:5000"
+    volumes:
+      - ./static/files:/app/static/files
     environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=development
-      - PORT=5000
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=localhost,127.0.0.1
