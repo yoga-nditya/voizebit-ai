@@ -560,7 +560,7 @@ def create_docx(data, filename):
 
 # ========== CLOUDCONVERT PDF GENERATION ==========
 def create_pdf_cloudconvert(filename):
-    """Convert DOCX to PDF using CloudConvert API"""
+    """Convert DOCX to PDF using CloudConvert API v2 (Jobs-based)"""
     if not CLOUDCONVERT_API_KEY:
         print("❌ CloudConvert API Key tidak diset")
         return None
@@ -577,109 +577,197 @@ def create_pdf_cloudconvert(filename):
     print(f"{'='*60}")
     
     try:
-        # Step 1: Create import/upload task
-        print("📤 Step 1: Uploading DOCX...")
         headers = {
             "Authorization": f"Bearer {CLOUDCONVERT_API_KEY}",
             "Content-Type": "application/json"
         }
         
-        import_response = requests.post(
-            "https://api.cloudconvert.com/v2/import/upload",
+        # Step 1: Create a Job with tasks
+        print("📤 Step 1: Creating conversion job...")
+        
+        job_payload = {
+            "tasks": {
+                "import-my-file": {
+                    "operation": "import/upload"
+                },
+                "convert-my-file": {
+                    "operation": "convert",
+                    "input": "import-my-file",
+                    "output_format": "pdf",
+                    "engine": "office"
+                },
+                "export-my-file": {
+                    "operation": "export/url",
+                    "input": "convert-my-file"
+                }
+            }
+        }
+        
+        job_response = requests.post(
+            "https://api.cloudconvert.com/v2/jobs",
             headers=headers,
+            json=job_payload,
             timeout=30
         )
-        import_response.raise_for_status()
-        import_data = import_response.json()
         
-        # Upload file
-        upload_url = import_data['data']['result']['form']['url']
-        upload_params = import_data['data']['result']['form']['parameters']
+        # Better error messages
+        if job_response.status_code == 401:
+            print("❌ 401 Unauthorized - API key tidak valid")
+            print(f"   Response: {job_response.text}")
+            return None
+        elif job_response.status_code == 403:
+            print("❌ 403 Forbidden - Kemungkinan:")
+            print("   1. Email belum diverifikasi")
+            print("   2. API key tidak punya permission yang benar")
+            print("   3. Free quota habis (25/day)")
+            print(f"   Response: {job_response.text}")
+            return None
+        elif job_response.status_code == 422:
+            print("❌ 422 Validation Error")
+            print(f"   Response: {job_response.text}")
+            return None
         
+        job_response.raise_for_status()
+        job_data = job_response.json()
+        job_id = job_data['data']['id']
+        
+        print(f"✅ Job created: {job_id}")
+        
+        # Step 2: Get upload task details
+        tasks = job_data['data']['tasks']
+        upload_task = None
+        
+        for task in tasks:
+            if task['operation'] == 'import/upload':
+                upload_task = task
+                break
+        
+        if not upload_task:
+            print("❌ Upload task not found in job")
+            return None
+        
+        upload_task_id = upload_task['id']
+        upload_url = upload_task['result']['form']['url']
+        upload_params = upload_task['result']['form']['parameters']
+        
+        print(f"📤 Step 2: Uploading file to CloudConvert...")
+        print(f"   Upload task ID: {upload_task_id}")
+        
+        # Step 3: Upload the DOCX file
         with open(docx_path, 'rb') as f:
-            files = {'file': (f'{filename}.docx', f, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')}
+            files = {
+                'file': (f'{filename}.docx', f, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+            }
+            
             upload_response = requests.post(
                 upload_url,
                 data=upload_params,
                 files=files,
-                timeout=60
+                timeout=90
             )
             upload_response.raise_for_status()
         
-        import_task_id = import_data['data']['id']
-        print(f"✅ Upload complete: {import_task_id}")
+        print(f"✅ File uploaded successfully")
         
-        # Step 2: Create conversion task
-        print("🔄 Step 2: Converting DOCX to PDF...")
-        convert_response = requests.post(
-            "https://api.cloudconvert.com/v2/convert",
-            headers=headers,
-            json={
-                "input": import_task_id,
-                "output_format": "pdf",
-                "engine": "office"
-            },
-            timeout=30
-        )
-        convert_response.raise_for_status()
-        convert_data = convert_response.json()
-        convert_task_id = convert_data['data']['id']
-        print(f"✅ Conversion started: {convert_task_id}")
-        
-        # Step 3: Wait for conversion (polling)
-        print("⏳ Step 3: Waiting for conversion...")
-        max_attempts = 30
+        # Step 4: Poll job status until finished
+        print("⏳ Step 3: Waiting for conversion to complete...")
+        max_attempts = 40
         attempt = 0
         
         while attempt < max_attempts:
-            time.sleep(2)
+            time.sleep(3)  # Wait 3 seconds between checks
             attempt += 1
             
+            # Get job status
             status_response = requests.get(
-                f"https://api.cloudconvert.com/v2/tasks/{convert_task_id}",
+                f"https://api.cloudconvert.com/v2/jobs/{job_id}",
                 headers=headers,
                 timeout=30
             )
             status_response.raise_for_status()
             status_data = status_response.json()
             
-            task_status = status_data['data']['status']
-            print(f"   Status: {task_status} (attempt {attempt}/{max_attempts})")
+            job_status = status_data['data']['status']
+            print(f"   Status: {job_status} (attempt {attempt}/{max_attempts})")
             
-            if task_status == 'finished':
-                # Step 4: Download PDF
-                print("📥 Step 4: Downloading PDF...")
-                download_url = status_data['data']['result']['files'][0]['url']
+            if job_status == 'finished':
+                print("✅ Conversion finished!")
                 
-                pdf_response = requests.get(download_url, timeout=60)
+                # Step 5: Download the PDF
+                print("📥 Step 4: Downloading PDF...")
+                
+                # Find export task
+                export_task = None
+                for task in status_data['data']['tasks']:
+                    if task['operation'] == 'export/url' and task['status'] == 'finished':
+                        export_task = task
+                        break
+                
+                if not export_task:
+                    print("❌ Export task not found")
+                    return None
+                
+                if not export_task.get('result') or not export_task['result'].get('files'):
+                    print("❌ No files in export result")
+                    return None
+                
+                download_url = export_task['result']['files'][0]['url']
+                
+                pdf_response = requests.get(download_url, timeout=90)
                 pdf_response.raise_for_status()
                 
+                # Save PDF
                 with open(pdf_path, 'wb') as f:
                     f.write(pdf_response.content)
                 
                 file_size = pdf_path.stat().st_size
+                
                 print(f"\n{'='*60}")
                 print(f"✅ PDF CREATED SUCCESSFULLY")
                 print(f"{'='*60}")
                 print(f"📁 File: {pdf_path.name}")
                 print(f"📊 Size: {file_size:,} bytes")
+                print(f"🎯 Job ID: {job_id}")
                 print(f"{'='*60}\n")
                 
                 return f"{filename}.pdf"
             
-            elif task_status == 'error':
-                error_msg = status_data['data'].get('message', 'Unknown error')
-                print(f"❌ Conversion failed: {error_msg}")
+            elif job_status == 'error':
+                print(f"❌ Job failed with error status")
+                
+                # Try to get error details
+                for task in status_data['data']['tasks']:
+                    if task['status'] == 'error':
+                        error_msg = task.get('message', 'Unknown error')
+                        print(f"   Task {task['operation']} error: {error_msg}")
+                
                 return None
         
-        print("❌ Conversion timeout")
+        print("❌ Conversion timeout after 120 seconds")
+        return None
+        
+    except requests.exceptions.HTTPError as e:
+        print(f"❌ CloudConvert HTTP error: {e}")
+        if e.response is not None:
+            print(f"   Status: {e.response.status_code}")
+            try:
+                error_data = e.response.json()
+                print(f"   Error: {json.dumps(error_data, indent=2)}")
+            except:
+                print(f"   Response: {e.response.text}")
         return None
         
     except requests.exceptions.RequestException as e:
-        print(f"❌ CloudConvert API error: {e}")
+        print(f"❌ CloudConvert request error: {e}")
         return None
+        
+    except KeyError as e:
+        print(f"❌ Unexpected response structure: missing key {e}")
+        print(f"   This might mean the API response format changed")
+        return None
+        
     except Exception as e:
-        print(f"❌ PDF conversion error: {e}")
+        print(f"❌ Unexpected error: {e}")
         import traceback
         traceback.print_exc()
         return None
