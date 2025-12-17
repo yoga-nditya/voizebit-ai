@@ -9,69 +9,17 @@ from dotenv import load_dotenv
 from datetime import datetime
 import shutil
 import zipfile
-import subprocess
-import platform
-
-# ========== PDF GENERATION - MULTIPLE METHODS ==========
-PDF_AVAILABLE = False
-PDF_METHOD = None
-
-# Try docx2pdf (Windows/macOS)
-try:
-    from docx2pdf import convert as docx_to_pdf
-    PDF_AVAILABLE = True
-    PDF_METHOD = "docx2pdf"
-except ImportError:
-    docx_to_pdf = None
-
-# Try pypandoc (Alternative)
-try:
-    import pypandoc
-    if not PDF_AVAILABLE:
-        PDF_AVAILABLE = True
-        PDF_METHOD = "pypandoc"
-except ImportError:
-    pypandoc = None
-
-# LibreOffice detection
-def check_libreoffice():
-    """Check if LibreOffice is available"""
-    try:
-        if platform.system() == "Windows":
-            paths = [
-                r"C:\Program Files\LibreOffice\program\soffice.exe",
-                r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
-            ]
-            for p in paths:
-                if os.path.exists(p):
-                    return p
-        else:
-            result = subprocess.run(['which', 'libreoffice'], 
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-            
-            result = subprocess.run(['which', 'soffice'], 
-                                  capture_output=True, text=True, timeout=5)
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-    except:
-        pass
-    return None
-
-LIBREOFFICE_PATH = check_libreoffice()
-if LIBREOFFICE_PATH and not PDF_AVAILABLE:
-    PDF_AVAILABLE = True
-    PDF_METHOD = "libreoffice"
+import time
 
 load_dotenv()
 
+# ========== API KEYS ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
-
-# ✅ Serper Key (Google Search API)
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
+CLOUDCONVERT_API_KEY = os.getenv("CLOUDCONVERT_API_KEY")
 
+# ========== DIRECTORIES ==========
 BASE_DIR = Path(__file__).parent
 FILES_DIR = BASE_DIR / "static" / "files"
 TEMPLATE_FILE = BASE_DIR / "template_quotation.docx"
@@ -105,11 +53,11 @@ def save_counter(counter):
 def get_next_nomor():
     """Generate nomor depan otomatis"""
     counter = load_counter()
-    nomor = str(counter).zfill(3)  # Format 001, 002, 003, dst
+    nomor = str(counter).zfill(3)
     save_counter(counter + 1)
     return nomor
 
-# ===== DATABASE LIMBAH B3 DARI PDF =====
+# ===== DATABASE LIMBAH B3 =====
 LIMBAH_B3_DB = {
     "A102d": {"jenis": "Aki/baterai bekas", "satuan": "Kg", "karakteristik": "Beracun / Korosif"},
     "A103d": {"jenis": "Debu dan fiber asbes (crocidolite, amosite, janthrophyllite)", "satuan": "Kg", "karakteristik": "Beracun"},
@@ -204,62 +152,42 @@ LIMBAH_B3_DB = {
 def find_limbah_by_jenis(jenis_query):
     """Cari kode limbah berdasarkan nama/jenis limbah"""
     jenis_lower = jenis_query.lower()
-
-    # Exact match
     for kode, data in LIMBAH_B3_DB.items():
         if data['jenis'].lower() == jenis_lower:
             return kode, data
-
-    # Partial match
     for kode, data in LIMBAH_B3_DB.items():
         if jenis_lower in data['jenis'].lower() or data['jenis'].lower() in jenis_lower:
             return kode, data
-
-    # Keyword match
     keywords = jenis_lower.split()
     for kode, data in LIMBAH_B3_DB.items():
         jenis_db_lower = data['jenis'].lower()
         match_count = sum(1 for kw in keywords if kw in jenis_db_lower)
-        if match_count >= 2:  # At least 2 keywords match
+        if match_count >= 2:
             return kode, data
-
     return None, None
 
 def normalize_limbah_code(text):
-    """
-    Normalisasi input voice menjadi format kode limbah yang benar
-    Contoh: 'A303 strip 3' -> 'A303-3'
-            'A303 minus 3' -> 'A303-3'
-            'B105 garis d' -> 'B105d'
-    """
+    """Normalisasi input voice menjadi format kode limbah yang benar"""
     text_clean = text.strip().upper()
-
     strip_words = ['STRIP', 'MINUS', 'MIN', 'DASH', 'SAMPAI', 'HINGGA', 'GARIS']
-
     for word in strip_words:
         text_clean = re.sub(r'\b' + word + r'\b', '-', text_clean, flags=re.IGNORECASE)
-
     text_clean = re.sub(r'\s*-\s*', '-', text_clean)
     text_clean = re.sub(r'\s+', '', text_clean)
-
     return text_clean
 
 def find_limbah_by_kode(kode_query):
     """Cari jenis limbah berdasarkan kode dengan normalisasi voice input"""
     kode_normalized = normalize_limbah_code(kode_query)
-
     if kode_normalized in LIMBAH_B3_DB:
         return kode_normalized, LIMBAH_B3_DB[kode_normalized]
-
     kode_lower = kode_normalized.lower()
     if kode_lower in LIMBAH_B3_DB:
         return kode_lower, LIMBAH_B3_DB[kode_lower]
-
     if not kode_normalized.endswith('d') and not kode_normalized.endswith('D'):
         kode_with_d = kode_normalized + 'd'
         if kode_with_d in LIMBAH_B3_DB:
             return kode_with_d, LIMBAH_B3_DB[kode_with_d]
-
     return None, None
 
 def angka_ke_romawi(bulan):
@@ -272,22 +200,16 @@ def angka_ke_romawi(bulan):
     return romawi.get(str(bulan), 'I')
 
 def angka_ke_terbilang(angka):
-    """
-    Convert angka ke terbilang Indonesia
-    Contoh: 14 -> 'empat belas', 30 -> 'tiga puluh'
-    """
+    """Convert angka ke terbilang Indonesia"""
     try:
         n = int(angka)
     except:
         return 'empat belas'
-
     if n == 0:
         return 'nol'
-
     satuan = ['', 'satu', 'dua', 'tiga', 'empat', 'lima', 'enam', 'tujuh', 'delapan', 'sembilan']
     belasan = ['sepuluh', 'sebelas', 'dua belas', 'tiga belas', 'empat belas', 'lima belas',
                'enam belas', 'tujuh belas', 'delapan belas', 'sembilan belas']
-
     if n < 10:
         return satuan[n]
     elif n < 20:
@@ -306,51 +228,27 @@ def angka_ke_terbilang(angka):
             result = 'seratus'
         else:
             result = satuan[ratusan] + ' ratus'
-
         if sisanya > 0:
             result += ' ' + angka_ke_terbilang(sisanya)
         return result
-
     return str(n)
-
-def format_tanggal_indonesia():
-    bulan_id = {
-        '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
-        '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
-        '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
-    }
-    now = datetime.now()
-    return f"Tangerang, {now.day} {bulan_id[now.strftime('%m')]} {now.year}"
 
 def convert_voice_to_number(text):
     text_lower = text.lower().strip()
-
     if re.match(r'^\d+$', text_lower.replace('.', '').replace(',', '')):
         return text_lower.replace('.', '').replace(',', '')
-
     kata_angka = {
-        'nol': 0, 'kosong': 0,
-        'satu': 1, 'se': 1,
-        'dua': 2, 'tiga': 3, 'empat': 4,
-        'lima': 5, 'enam': 6, 'tujuh': 7,
-        'delapan': 8, 'sembilan': 9,
+        'nol': 0, 'kosong': 0, 'satu': 1, 'se': 1, 'dua': 2, 'tiga': 3, 'empat': 4,
+        'lima': 5, 'enam': 6, 'tujuh': 7, 'delapan': 8, 'sembilan': 9,
         'sepuluh': 10, 'sebelas': 11,
     }
-
     multipliers = {
-        'belas': 10,
-        'puluh': 10,
-        'ratus': 100,
-        'ribu': 1000,
-        'juta': 1000000,
-        'miliar': 1000000000,
-        'milyar': 1000000000
+        'belas': 10, 'puluh': 10, 'ratus': 100, 'ribu': 1000,
+        'juta': 1000000, 'miliar': 1000000000, 'milyar': 1000000000
     }
-
     words = text_lower.split()
     result = 0
     temp = 0
-
     for word in words:
         if word in kata_angka:
             temp += kata_angka[word]
@@ -368,12 +266,9 @@ def convert_voice_to_number(text):
             temp = (temp if temp > 0 else 1) * multipliers[word]
             result += temp
             temp = 0
-
     result += temp
-
     if result > 0:
         return str(result)
-
     return text
 
 def call_ai(text, system_prompt=None):
@@ -383,7 +278,6 @@ def call_ai(text, system_prompt=None):
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": text})
-
     resp = requests.post(url, headers=headers, json={
         "model": OPENROUTER_MODEL,
         "messages": messages,
@@ -393,11 +287,7 @@ def call_ai(text, system_prompt=None):
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
 
-# =========================
-# ✅ SEARCH ALAMAT VIA SERPER (TANPA GMAPS)
-# Tidak ada "Di tempat" sama sekali.
-# Kalau gagal: return "" (kosong)
-# =========================
+# ===== SEARCH ALAMAT VIA SERPER =====
 def _clean_address(addr: str) -> str:
     if not addr:
         return ""
@@ -406,15 +296,10 @@ def _clean_address(addr: str) -> str:
     return addr
 
 def _extract_address_from_text(text: str) -> str:
-    """
-    Heuristik sederhana: cari baris/fragmen alamat Indonesia dari snippet.
-    """
     if not text:
         return ""
     t = text.replace('\n', ' ')
     t = re.sub(r'\s+', ' ', t)
-
-    # pola yang sering muncul di alamat Indonesia
     patterns = [
         r'(Jl\.?\s[^.,]{5,120}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,120}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,80})',
         r'(Rukan[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
@@ -428,47 +313,25 @@ def _extract_address_from_text(text: str) -> str:
     return ""
 
 def search_company_address(company_name: str) -> str:
-    """
-    Cari alamat perusahaan dengan Serper (Google Search API).
-    Return:
-      - alamat string jika ketemu
-      - "" jika tidak ketemu (tanpa "Di tempat")
-    """
     name = (company_name or "").strip()
     if len(name) < 3:
         return ""
-
     if not SERPER_API_KEY:
         print("SERPER_API_KEY belum diset")
         return ""
-
     try:
         url = "https://google.serper.dev/search"
-        headers = {
-            "X-API-KEY": SERPER_API_KEY,
-            "Content-Type": "application/json"
-        }
-        # query dibuat spesifik ke alamat
-        payload = {
-            "q": f"{name} alamat",
-            "gl": "id",
-            "hl": "id",
-            "num": 5
-        }
+        headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+        payload = {"q": f"{name} alamat", "gl": "id", "hl": "id", "num": 5}
         r = requests.post(url, headers=headers, json=payload, timeout=30)
         r.raise_for_status()
         data = r.json()
-
-        # 1) Coba ambil dari knowledgeGraph kalau ada
         kg = data.get("knowledgeGraph") or {}
-        # beberapa format yang mungkin
         for key in ["address", "formattedAddress"]:
             if isinstance(kg.get(key), str):
                 addr = _clean_address(kg.get(key))
                 if len(addr) >= 10:
                     return addr
-
-        # kadang address berupa dict
         addr_obj = kg.get("address")
         if isinstance(addr_obj, dict):
             parts = []
@@ -479,8 +342,6 @@ def search_company_address(company_name: str) -> str:
             addr = _clean_address(", ".join(parts))
             if len(addr) >= 10:
                 return addr
-
-        # 2) Coba local pack / places (kalau Serper mengembalikan)
         places = data.get("places") or data.get("local") or []
         if isinstance(places, list) and places:
             p0 = places[0] or {}
@@ -488,8 +349,6 @@ def search_company_address(company_name: str) -> str:
                 addr = _clean_address(p0.get("address") or p0.get("formattedAddress") or "")
                 if len(addr) >= 10:
                     return addr
-
-        # 3) Coba dari organic results snippet/title
         organic = data.get("organic") or []
         for item in organic:
             if not isinstance(item, dict):
@@ -499,7 +358,6 @@ def search_company_address(company_name: str) -> str:
             addr = _extract_address_from_text(snippet) or _extract_address_from_text(title)
             if len(addr) >= 10:
                 return addr
-
         return ""
     except Exception as e:
         print(f"Error searching address (Serper): {e}")
@@ -507,10 +365,8 @@ def search_company_address(company_name: str) -> str:
 
 def format_rupiah(angka_str):
     angka_clean = re.sub(r'[^\d]', '', str(angka_str))
-
     if not angka_clean:
         return angka_str
-
     try:
         angka_int = int(angka_clean)
         formatted = f"{angka_int:,}".replace(',', '.')
@@ -530,11 +386,9 @@ def escape_xml(text):
 def create_docx(data, filename):
     filepath = FILES_DIR / f"{filename}.docx"
     temp_extract = TEMP_DIR / f"extract_{uuid.uuid4().hex[:8]}"
-
     try:
         with zipfile.ZipFile(TEMPLATE_FILE, 'r') as zip_ref:
             zip_ref.extractall(temp_extract)
-
         now = datetime.now()
         bulan_romawi = angka_ke_romawi(now.strftime('%m'))
         bulan_id = {
@@ -542,64 +396,48 @@ def create_docx(data, filename):
             '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
             '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
         }
-
         nama_perusahaan = data['nama_perusahaan'].replace('\n', ' ').replace('\r', ' ')
         alamat_perusahaan = data['alamat_perusahaan'].replace('\n', ' ').replace('\r', ' ')
         harga_transportasi = format_rupiah(data.get('harga_transportasi', '1200000'))
         harga_mou = format_rupiah(data.get('harga_mou', '')) if data.get('harga_mou') else None
-
         doc_xml_path = temp_extract / "word" / "document.xml"
-
         with open(doc_xml_path, 'r', encoding='utf-8') as f:
             doc_content = f.read()
-
         doc_content = doc_content.replace('>027</w:t>', f'>{data.get("nomor_depan", "002")}</w:t>', 1)
         doc_content = doc_content.replace('>IX</w:t>', f'>{bulan_romawi}</w:t>', 1)
         doc_content = doc_content.replace('>PT Surgika Alkesindo, </w:t>', f'>{escape_xml(nama_perusahaan)}, </w:t>')
         doc_content = doc_content.replace('>PT. Surgika Alkesindo</w:t>', f'>{escape_xml(nama_perusahaan)}</w:t>')
-
         old_alamat = 'Jl Plumpang Semper No.6A RT.12/Rw.2, Tugu Utara, Kec. Koja, Jakarta Utara, DKI Jakarta 14260'
         doc_content = doc_content.replace(f'>{old_alamat}</w:t>', f'>{escape_xml(alamat_perusahaan)}</w:t>')
         doc_content = doc_content.replace('>28 November </w:t>', f'>{now.day} {bulan_id[now.strftime("%m")]} </w:t>', 1)
-
         termin_hari = data.get('termin_hari', '14')
         termin_terbilang = angka_ke_terbilang(termin_hari)
         doc_content = doc_content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
-
         table_start_pattern = r'<w:tbl>(.*?Jenis Limbah.*?)</w:tbl>'
         table_match = re.search(table_start_pattern, doc_content, re.DOTALL)
-
         if table_match:
             full_table = table_match.group(0)
-
             tblPr_match = re.search(r'(<w:tblPr>.*?</w:tblPr>)', full_table, re.DOTALL)
             tblGrid_match = re.search(r'(<w:tblGrid>.*?</w:tblGrid>)', full_table, re.DOTALL)
-
             tblPr = tblPr_match.group(1) if tblPr_match else ''
             tblGrid = tblGrid_match.group(1) if tblGrid_match else ''
-
             header_pattern = r'(<w:tr\b[^>]*>.*?Jenis Limbah.*?</w:tr>)'
             header_match = re.search(header_pattern, full_table, re.DOTALL)
-
             if header_match:
                 header_row_xml = header_match.group(1)
-
                 bold_border = '''<w:tcBorders>
                     <w:top w:val="single" w:sz="12" w:space="0" w:color="000000"/>
                     <w:left w:val="single" w:sz="12" w:space="0" w:color="000000"/>
                     <w:bottom w:val="single" w:sz="12" w:space="0" w:color="000000"/>
                     <w:right w:val="single" w:sz="12" w:space="0" w:color="000000"/>
                 </w:tcBorders>'''
-
                 new_rows_xml = ""
-
                 items = data.get('items_limbah', [])
                 for idx, item in enumerate(items, 1):
                     harga_formatted = format_rupiah(item.get('harga', ''))
                     jenis = escape_xml(item.get('jenis_limbah', ''))
                     kode = escape_xml(item.get('kode_limbah', ''))
                     satuan = escape_xml(item.get('satuan', 'Kg'))
-
                     new_rows_xml += f'''<w:tr>
                         <w:tc><w:tcPr><w:tcW w:w="850" w:type="dxa"/>{bold_border}</w:tcPr>
                             <w:p><w:pPr><w:jc w:val="center"/></w:pPr>
@@ -637,7 +475,6 @@ def create_docx(data, filename):
                             </w:p>
                         </w:tc>
                     </w:tr>'''
-
                 new_rows_xml += f'''<w:tr>
                     <w:tc><w:tcPr><w:tcW w:w="7087" w:type="dxa"/><w:gridSpan w:val="3"/>{bold_border}</w:tcPr>
                         <w:p><w:pPr><w:jc w:val="center"/></w:pPr>
@@ -661,7 +498,6 @@ def create_docx(data, filename):
                         </w:p>
                     </w:tc>
                 </w:tr>'''
-
                 if harga_mou:
                     new_rows_xml += f'''<w:tr>
                         <w:tc><w:tcPr><w:tcW w:w="7087" w:type="dxa"/><w:gridSpan w:val="3"/>{bold_border}</w:tcPr>
@@ -686,15 +522,11 @@ def create_docx(data, filename):
                             </w:p>
                         </w:tc>
                     </w:tr>'''
-
                 new_table = f'<w:tbl>{tblPr}{tblGrid}{header_row_xml}{new_rows_xml}</w:tbl>'
                 doc_content = doc_content.replace(full_table, new_table)
-
         with open(doc_xml_path, 'w', encoding='utf-8') as f:
             f.write(doc_content)
-
         word_dir = temp_extract / "word"
-
         header_replacements = {
             '>027</w:t>': f'>{data.get("nomor_depan", "002")}</w:t>',
             '>IX</w:t>': f'>{bulan_romawi}</w:t>',
@@ -703,163 +535,149 @@ def create_docx(data, filename):
             f'>{old_alamat}</w:t>': f'>{escape_xml(alamat_perusahaan)}</w:t>',
             '>28 November </w:t>': f'>{now.day} {bulan_id[now.strftime("%m")]} </w:t>',
         }
-
         for xml_file in word_dir.glob("*.xml"):
             if xml_file.name.startswith(('header', 'footer')):
                 with open(xml_file, 'r', encoding='utf-8') as f:
                     content = f.read()
-
                 for old_text, new_text in header_replacements.items():
                     content = content.replace(old_text, new_text)
-
                 with open(xml_file, 'w', encoding='utf-8') as f:
                     f.write(content)
-
         with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as docx:
             for file_path in temp_extract.rglob('*'):
                 if file_path.is_file():
                     arcname = file_path.relative_to(temp_extract)
                     docx.write(file_path, arcname)
-
         return f"{filename}.docx"
-
     except Exception as e:
         print(f"Error: {e}")
         import traceback
         traceback.print_exc()
         raise
-
     finally:
         if temp_extract.exists():
             shutil.rmtree(temp_extract)
 
-# ========== IMPROVED PDF GENERATION WITH MULTIPLE METHODS ==========
-def create_pdf_docx2pdf(docx_path, pdf_path):
-    """Method 1: docx2pdf (Windows/macOS)"""
-    try:
-        print(f"  → Trying docx2pdf...")
-        docx_to_pdf(str(docx_path), str(pdf_path))
-        return pdf_path.exists() and pdf_path.stat().st_size > 0
-    except Exception as e:
-        print(f"  ✗ docx2pdf failed: {e}")
-        return False
-
-def create_pdf_libreoffice(docx_path, pdf_path):
-    """Method 2: LibreOffice headless (Linux/Windows/macOS)"""
-    try:
-        print(f"  → Trying LibreOffice...")
-        
-        # Remove existing PDF to avoid conflicts
-        if pdf_path.exists():
-            pdf_path.unlink()
-        
-        cmd = [
-            LIBREOFFICE_PATH,
-            '--headless',
-            '--convert-to', 'pdf',
-            '--outdir', str(FILES_DIR),
-            str(docx_path)
-        ]
-        
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False
-        )
-        
-        if result.returncode == 0 and pdf_path.exists() and pdf_path.stat().st_size > 0:
-            return True
-        else:
-            print(f"  ✗ LibreOffice failed: {result.stderr}")
-            return False
-            
-    except subprocess.TimeoutExpired:
-        print(f"  ✗ LibreOffice timeout")
-        return False
-    except Exception as e:
-        print(f"  ✗ LibreOffice error: {e}")
-        return False
-
-def create_pdf_pypandoc(docx_path, pdf_path):
-    """Method 3: pypandoc (Alternative converter)"""
-    try:
-        print(f"  → Trying pypandoc...")
-        pypandoc.convert_file(
-            str(docx_path),
-            'pdf',
-            outputfile=str(pdf_path),
-            extra_args=['--pdf-engine=xelatex']
-        )
-        return pdf_path.exists() and pdf_path.stat().st_size > 0
-    except Exception as e:
-        print(f"  ✗ pypandoc failed: {e}")
-        return False
-
-def create_pdf(filename):
-    """
-    Convert DOCX to PDF with multiple fallback methods
-    Returns: PDF filename if successful, None if failed
-    """
-    if not PDF_AVAILABLE:
-        print("❌ PDF generation disabled - no converter available")
-        print("   Install: pip install docx2pdf")
-        print("   Or install LibreOffice for headless conversion")
+# ========== CLOUDCONVERT PDF GENERATION ==========
+def create_pdf_cloudconvert(filename):
+    """Convert DOCX to PDF using CloudConvert API"""
+    if not CLOUDCONVERT_API_KEY:
+        print("❌ CloudConvert API Key tidak diset")
         return None
-
+    
     docx_path = FILES_DIR / f"{filename}.docx"
     pdf_path = FILES_DIR / f"{filename}.pdf"
-
-    # Check if DOCX exists
+    
     if not docx_path.exists():
         print(f"❌ DOCX not found: {docx_path}")
         return None
-
-    print(f"🔄 Converting {filename}.docx to PDF...")
-    print(f"   DOCX size: {docx_path.stat().st_size} bytes")
-    print(f"   Method: {PDF_METHOD}")
-
+    
+    print(f"\n{'='*60}")
+    print(f"🔄 Converting to PDF via CloudConvert: {filename}.docx")
+    print(f"{'='*60}")
+    
     try:
-        success = False
+        # Step 1: Create import/upload task
+        print("📤 Step 1: Uploading DOCX...")
+        headers = {
+            "Authorization": f"Bearer {CLOUDCONVERT_API_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        # Try primary method first
-        if PDF_METHOD == "docx2pdf" and docx_to_pdf:
-            success = create_pdf_docx2pdf(docx_path, pdf_path)
+        import_response = requests.post(
+            "https://api.cloudconvert.com/v2/import/upload",
+            headers=headers,
+            timeout=30
+        )
+        import_response.raise_for_status()
+        import_data = import_response.json()
         
-        elif PDF_METHOD == "libreoffice" and LIBREOFFICE_PATH:
-            success = create_pdf_libreoffice(docx_path, pdf_path)
+        # Upload file
+        upload_url = import_data['data']['result']['form']['url']
+        upload_params = import_data['data']['result']['form']['parameters']
         
-        elif PDF_METHOD == "pypandoc" and pypandoc:
-            success = create_pdf_pypandoc(docx_path, pdf_path)
+        with open(docx_path, 'rb') as f:
+            files = {'file': (f'{filename}.docx', f, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')}
+            upload_response = requests.post(
+                upload_url,
+                data=upload_params,
+                files=files,
+                timeout=60
+            )
+            upload_response.raise_for_status()
         
-        # Try fallback methods if primary failed
-        if not success:
-            print(f"  ⚠️  Primary method failed, trying fallbacks...")
+        import_task_id = import_data['data']['id']
+        print(f"✅ Upload complete: {import_task_id}")
+        
+        # Step 2: Create conversion task
+        print("🔄 Step 2: Converting DOCX to PDF...")
+        convert_response = requests.post(
+            "https://api.cloudconvert.com/v2/convert",
+            headers=headers,
+            json={
+                "input": import_task_id,
+                "output_format": "pdf",
+                "engine": "office"
+            },
+            timeout=30
+        )
+        convert_response.raise_for_status()
+        convert_data = convert_response.json()
+        convert_task_id = convert_data['data']['id']
+        print(f"✅ Conversion started: {convert_task_id}")
+        
+        # Step 3: Wait for conversion (polling)
+        print("⏳ Step 3: Waiting for conversion...")
+        max_attempts = 30
+        attempt = 0
+        
+        while attempt < max_attempts:
+            time.sleep(2)
+            attempt += 1
             
-            # Try docx2pdf as fallback
-            if not success and docx_to_pdf and PDF_METHOD != "docx2pdf":
-                success = create_pdf_docx2pdf(docx_path, pdf_path)
+            status_response = requests.get(
+                f"https://api.cloudconvert.com/v2/tasks/{convert_task_id}",
+                headers=headers,
+                timeout=30
+            )
+            status_response.raise_for_status()
+            status_data = status_response.json()
             
-            # Try LibreOffice as fallback
-            if not success and LIBREOFFICE_PATH and PDF_METHOD != "libreoffice":
-                success = create_pdf_libreoffice(docx_path, pdf_path)
+            task_status = status_data['data']['status']
+            print(f"   Status: {task_status} (attempt {attempt}/{max_attempts})")
             
-            # Try pypandoc as fallback
-            if not success and pypandoc and PDF_METHOD != "pypandoc":
-                success = create_pdf_pypandoc(docx_path, pdf_path)
+            if task_status == 'finished':
+                # Step 4: Download PDF
+                print("📥 Step 4: Downloading PDF...")
+                download_url = status_data['data']['result']['files'][0]['url']
+                
+                pdf_response = requests.get(download_url, timeout=60)
+                pdf_response.raise_for_status()
+                
+                with open(pdf_path, 'wb') as f:
+                    f.write(pdf_response.content)
+                
+                file_size = pdf_path.stat().st_size
+                print(f"\n{'='*60}")
+                print(f"✅ PDF CREATED SUCCESSFULLY")
+                print(f"{'='*60}")
+                print(f"📁 File: {pdf_path.name}")
+                print(f"📊 Size: {file_size:,} bytes")
+                print(f"{'='*60}\n")
+                
+                return f"{filename}.pdf"
+            
+            elif task_status == 'error':
+                error_msg = status_data['data'].get('message', 'Unknown error')
+                print(f"❌ Conversion failed: {error_msg}")
+                return None
         
-        # Verify final result
-        if success and pdf_path.exists() and pdf_path.stat().st_size > 0:
-            file_size = pdf_path.stat().st_size
-            print(f"✅ PDF created successfully: {pdf_path.name} ({file_size} bytes)")
-            return f"{filename}.pdf"
-        else:
-            print(f"❌ PDF creation failed - file not created or empty")
-            if pdf_path.exists():
-                print(f"   PDF size: {pdf_path.stat().st_size} bytes")
-            return None
-            
+        print("❌ Conversion timeout")
+        return None
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ CloudConvert API error: {e}")
+        return None
     except Exception as e:
         print(f"❌ PDF conversion error: {e}")
         import traceback
@@ -870,23 +688,30 @@ def create_pdf(filename):
 def index():
     return render_template("index.html")
 
+@app.route("/api/test-pdf", methods=["GET"])
+def test_pdf():
+    """Test endpoint untuk cek CloudConvert availability"""
+    info = {
+        "pdf_method": "cloudconvert",
+        "cloudconvert_available": bool(CLOUDCONVERT_API_KEY),
+        "cloudconvert_api_key_set": bool(CLOUDCONVERT_API_KEY)
+    }
+    return jsonify(info)
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     try:
         data = request.get_json()
         text = data.get("message", "").strip()
-
         if not text:
             return jsonify({"error": "Pesan kosong"}), 400
-
         sid = session.get('sid')
         if not sid:
             sid = str(uuid.uuid4())
             session['sid'] = sid
-
         state = conversations.get(sid, {'step': 'idle', 'data': {}})
         lower = text.lower()
-
+        
         # Start conversation
         if 'quotation' in lower or 'penawaran' in lower or 'buat' in lower:
             nomor_depan = get_next_nomor()
@@ -899,15 +724,12 @@ def chat():
             }
             conversations[sid] = state
             return jsonify({"text": f"Baik, saya bantu buatkan quotation.<br><br>✅ Nomor Surat: <b>{nomor_depan}</b><br><br>❓ <b>1. Nama Perusahaan?</b>"})
-
-        # Step 1: Nama Perusahaan (search alamat dulu via Serper)
+        
+        # Step 1: Nama Perusahaan
         if state['step'] == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
-
             alamat = search_company_address(text)
             alamat = alamat.strip()
-
-            # Jika alamat belum ketemu, minta user isi manual (tanpa "Di tempat")
             if not alamat:
                 state['step'] = 'alamat_manual'
                 state['data']['alamat_perusahaan'] = ""
@@ -915,16 +737,14 @@ def chat():
                 return jsonify({
                     "text": f"✅ Nama: <b>{text}</b><br>🔎 Alamat: <b>(belum ditemukan otomatis)</b><br><br>❓ <b>Masukkan alamat lengkap perusahaan?</b>"
                 })
-
             state['data']['alamat_perusahaan'] = alamat
             state['step'] = 'jenis_kode_limbah'
             state['data']['current_item'] = {}
             conversations[sid] = state
-
             return jsonify({
                 "text": f"✅ Nama: <b>{text}</b><br>✅ Alamat: <b>{alamat}</b><br><br>📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
             })
-
+        
         # Step 1b: Alamat manual
         if state['step'] == 'alamat_manual':
             state['data']['alamat_perusahaan'] = text
@@ -934,11 +754,10 @@ def chat():
             return jsonify({
                 "text": f"✅ Alamat tersimpan: <b>{text}</b><br><br>📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
             })
-
+        
         # Step 2: Jenis/Kode Limbah
         elif state['step'] == 'jenis_kode_limbah':
             kode, data_limbah = find_limbah_by_kode(text)
-
             if kode and data_limbah:
                 state['data']['current_item']['kode_limbah'] = kode
                 state['data']['current_item']['jenis_limbah'] = data_limbah['jenis']
@@ -948,7 +767,6 @@ def chat():
                 return jsonify({"text": f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"})
             else:
                 kode, data_limbah = find_limbah_by_jenis(text)
-
                 if kode and data_limbah:
                     state['data']['current_item']['kode_limbah'] = kode
                     state['data']['current_item']['jenis_limbah'] = data_limbah['jenis']
@@ -958,20 +776,18 @@ def chat():
                     return jsonify({"text": f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"})
                 else:
                     return jsonify({"text": f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan dalam database.<br><br>Silakan coba lagi dengan:<br>• Kode limbah (contoh: A102d, B105d)<br>• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)"})
-
+        
         # Step 3: Harga
         elif state['step'] == 'harga':
             harga_converted = convert_voice_to_number(text)
             state['data']['current_item']['harga'] = harga_converted
-
             state['data']['items_limbah'].append(state['data']['current_item'])
             num = len(state['data']['items_limbah'])
             state['step'] = 'tambah_item'
             conversations[sid] = state
-
             harga_formatted = format_rupiah(harga_converted)
             return jsonify({"text": f"✅ Item #{num} tersimpan!<br>💰 Harga: <b>Rp {harga_formatted}</b><br><br>❓ <b>Tambah item lagi?</b> (ya/tidak)"})
-
+        
         # Step 4: Tambah Item?
         elif state['step'] == 'tambah_item':
             if 'ya' in lower or 'iya' in lower:
@@ -984,7 +800,7 @@ def chat():
                 state['step'] = 'harga_transportasi'
                 conversations[sid] = state
                 return jsonify({"text": f"✅ Total: <b>{len(state['data']['items_limbah'])} item</b><br><br>❓ <b>4. Biaya Transportasi (Rp)?</b><br><i>Satuan: ritase</i>"})
-
+        
         # Step 5: Harga Transportasi
         elif state['step'] == 'harga_transportasi':
             transportasi_converted = convert_voice_to_number(text)
@@ -993,7 +809,7 @@ def chat():
             conversations[sid] = state
             transportasi_formatted = format_rupiah(transportasi_converted)
             return jsonify({"text": f"✅ Transportasi: <b>Rp {transportasi_formatted}/ritase</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"})
-
+        
         # Step 6: Tanya MoU
         elif state['step'] == 'tanya_mou':
             if 'ya' in lower or 'iya' in lower:
@@ -1005,17 +821,16 @@ def chat():
                 state['step'] = 'tanya_termin'
                 conversations[sid] = state
                 return jsonify({"text": "❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"})
-
+        
         # Step 7: Harga MoU
         elif state['step'] == 'harga_mou':
             mou_converted = convert_voice_to_number(text)
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
             conversations[sid] = state
-
             mou_formatted = format_rupiah(mou_converted)
             return jsonify({"text": f"✅ MoU: <b>Rp {mou_formatted}/Tahun</b><br><br>❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"})
-
+        
         # Step 8: Tanya Termin
         elif state['step'] == 'tanya_termin':
             if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
@@ -1026,41 +841,41 @@ def chat():
                     state['data']['termin_hari'] = termin_converted
                 else:
                     state['data']['termin_hari'] = '14'
-
+            
             fname = f"Quotation_{re.sub(r'[^A-Za-z0-9]+', '_', state['data']['nama_perusahaan'])}_{uuid.uuid4().hex[:6]}"
             
-            # Create DOCX
             print(f"\n{'='*60}")
-            print(f"Creating documents for: {state['data']['nama_perusahaan']}")
+            print(f"📝 Creating documents for: {state['data']['nama_perusahaan']}")
             print(f"{'='*60}")
             
+            # Create DOCX
             docx = create_docx(state['data'], fname)
             print(f"✅ DOCX created: {docx}")
             
-            # Create PDF with detailed logging
-            pdf = create_pdf(fname)
+            # Create PDF with CloudConvert
+            pdf = create_pdf_cloudconvert(fname)
             if pdf:
                 print(f"✅ PDF created: {pdf}")
             else:
                 print(f"⚠️  PDF not created - continuing without PDF")
             
             print(f"{'='*60}\n")
-
+            
             conversations[sid] = {'step': 'idle', 'data': {}}
-
+            
             files = [{"type": "docx", "filename": docx, "url": f"/static/files/{docx}"}]
             if pdf:
                 files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
-
+            
             termin_terbilang = angka_ke_terbilang(state['data']['termin_hari'])
             return jsonify({
                 "text": f"✅ Termin: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>🎉 <b>Quotation berhasil dibuat!</b>",
                 "files": files
             })
-
+        
         # Fallback to AI
         return jsonify({"text": call_ai(text)})
-
+    
     except Exception as e:
         print(f"ERROR: {e}")
         import traceback
@@ -1074,30 +889,21 @@ def download(filename):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug_mode = os.getenv("FLASK_ENV") != "production"
-
+    
     print("\n" + "="*60)
     print("🚀 QUOTATION GENERATOR - SMART LIMBAH B3 DETECTION")
     print("="*60)
     print(f"📁 Template: {TEMPLATE_FILE.exists() and '✅ Found' or '❌ Missing'}")
     print(f"🔑 OpenRouter Key: {OPENROUTER_API_KEY and '✅ Set' or '❌ Not Set'}")
     print(f"🔎 Serper Key: {SERPER_API_KEY and '✅ Set' or '❌ Not Set'}")
-    print(f"📄 PDF: {PDF_AVAILABLE and '✅ Enabled' or '❌ Disabled'}")
-    if PDF_AVAILABLE:
-        print(f"   Method: {PDF_METHOD}")
-        if PDF_METHOD == "docx2pdf":
-            print(f"   Library: docx2pdf")
-        elif PDF_METHOD == "libreoffice":
-            print(f"   Path: {LIBREOFFICE_PATH}")
-        elif PDF_METHOD == "pypandoc":
-            print(f"   Library: pypandoc")
-    else:
-        print(f"   Install: pip install docx2pdf")
-        print(f"   Or install LibreOffice for headless conversion")
+    print(f"📄 PDF Generation: {CLOUDCONVERT_API_KEY and '✅ ENABLED (CloudConvert)' or '❌ DISABLED'}")
+    if CLOUDCONVERT_API_KEY:
+        print(f"   Method: CloudConvert API")
+        print(f"   Free tier: 25 conversions/day")
     print(f"🗄️  Database: {len(LIMBAH_B3_DB)} jenis limbah B3")
     print(f"🔢 Current Counter: {load_counter()}")
     print(f"🌐 Port: {port}")
     print(f"🔧 Debug: {debug_mode}")
-    print(f"💻 Platform: {platform.system()}")
     print("="*60 + "\n")
-
+    
     app.run(host="0.0.0.0", port=port, debug=debug_mode)
