@@ -12,6 +12,13 @@ import zipfile
 import subprocess
 import platform
 
+# ===== PDF REPORTLAB (LINUX SAFE) =====
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+
 # ========== PDF GENERATION - MULTIPLE METHODS ==========
 PDF_AVAILABLE = False
 PDF_METHOD = None
@@ -39,7 +46,7 @@ def check_libreoffice():
     try:
         system = platform.system()
         print(f"🔍 Checking LibreOffice on {system}...")
-        
+
         if system == "Windows":
             paths = [
                 r"C:\Program Files\LibreOffice\program\soffice.exe",
@@ -52,28 +59,28 @@ def check_libreoffice():
         else:
             # Linux/macOS - try multiple commands
             commands = ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice']
-            
+
             for cmd in commands:
                 try:
                     # Try direct path first
                     if os.path.exists(cmd) and os.access(cmd, os.X_OK):
                         print(f"✅ Found LibreOffice at: {cmd}")
                         return cmd
-                    
+
                     # Try using 'which' command
                     result = subprocess.run(
-                        ['which', cmd], 
-                        capture_output=True, 
-                        text=True, 
+                        ['which', cmd],
+                        capture_output=True,
+                        text=True,
                         timeout=5
                     )
                     if result.returncode == 0 and result.stdout.strip():
                         path = result.stdout.strip()
                         print(f"✅ Found LibreOffice at: {path}")
                         return path
-                except Exception as e:
+                except Exception:
                     continue
-            
+
             # Try to find via command -v (alternative to which)
             for cmd in ['libreoffice', 'soffice']:
                 try:
@@ -90,11 +97,11 @@ def check_libreoffice():
                         return path
                 except:
                     continue
-                    
+
         print("❌ LibreOffice not found")
     except Exception as e:
         print(f"❌ Error checking LibreOffice: {e}")
-    
+
     return None
 
 LIBREOFFICE_PATH = check_libreoffice()
@@ -771,216 +778,133 @@ def create_docx(data, filename):
         if temp_extract.exists():
             shutil.rmtree(temp_extract)
 
-# ========== IMPROVED PDF GENERATION - OPTIMIZED FOR RENDER.COM ==========
-def create_pdf_libreoffice(docx_path, pdf_path):
-    """Method: LibreOffice headless - PRIMARY for Linux/Render.com"""
+# ==========================================================
+# ✅ PDF GENERATOR TANPA LIBREOFFICE (REPORTLAB) - LINUX SAFE
+# ==========================================================
+def create_pdf_reportlab(data: dict, filename: str):
+    """
+    Generate PDF langsung dari data (tanpa LibreOffice).
+    Output: static/files/<filename>.pdf
+    """
     try:
-        print(f"  → Converting with LibreOffice...")
-        print(f"     Path: {LIBREOFFICE_PATH}")
-        
-        # Remove existing PDF to avoid conflicts
-        if pdf_path.exists():
-            pdf_path.unlink()
-            print(f"     Removed existing PDF")
-        
-        # Ensure output directory exists
-        FILES_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # LibreOffice command with optimized flags for headless conversion
-        cmd = [
-            str(LIBREOFFICE_PATH),
-            '--headless',
-            '--invisible',
-            '--nocrashreport',
-            '--nodefault',
-            '--nofirststartwizard',
-            '--nolockcheck',
-            '--nologo',
-            '--norestore',
-            '--convert-to', 'pdf:writer_pdf_Export',
-            '--outdir', str(FILES_DIR),
-            str(docx_path)
-        ]
-        
-        print(f"     Running command: {' '.join(cmd)}")
-        
-        # Run conversion with timeout
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=90,  # Increased timeout for server environment
-            check=False,
-            env={**os.environ, 'HOME': str(TEMP_DIR)}  # Set HOME for LibreOffice
+        pdf_path = FILES_DIR / f"{filename}.pdf"
+
+        styles = getSampleStyleSheet()
+        normal = styles["Normal"]
+        title = ParagraphStyle("title", parent=styles["Title"], fontSize=16, leading=20, spaceAfter=10)
+        small = ParagraphStyle("small", parent=normal, fontSize=10, leading=13)
+
+        doc = SimpleDocTemplate(
+            str(pdf_path),
+            pagesize=A4,
+            leftMargin=2*cm,
+            rightMargin=2*cm,
+            topMargin=2*cm,
+            bottomMargin=2*cm
         )
-        
-        print(f"     Return code: {result.returncode}")
-        if result.stdout:
-            print(f"     STDOUT: {result.stdout}")
-        if result.stderr:
-            print(f"     STDERR: {result.stderr}")
-        
-        # Verify PDF was created
-        if pdf_path.exists():
-            file_size = pdf_path.stat().st_size
-            print(f"     ✓ PDF created: {file_size} bytes")
-            if file_size > 1000:  # Minimum valid PDF size
-                return True
-            else:
-                print(f"     ✗ PDF too small ({file_size} bytes) - likely corrupt")
-                return False
-        else:
-            print(f"     ✗ PDF file not created at: {pdf_path}")
-            return False
-            
-    except subprocess.TimeoutExpired:
-        print(f"  ✗ LibreOffice conversion timeout (>90s)")
-        return False
+
+        now = datetime.now()
+        bulan_id = {
+            '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
+            '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
+            '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
+        }
+        tanggal = f"Tangerang, {now.day} {bulan_id[now.strftime('%m')]} {now.year}"
+
+        nomor_depan = data.get("nomor_depan", "")
+        bulan_romawi = angka_ke_romawi(now.strftime("%m"))
+        nomor_surat = f"{nomor_depan}/KLG-QTN/{bulan_romawi}/{now.year}"
+
+        nama = data.get("nama_perusahaan", "-")
+        alamat = data.get("alamat_perusahaan", "-")
+
+        items = data.get("items_limbah", [])
+        biaya_transport = data.get("harga_transportasi", "")
+        biaya_mou = data.get("harga_mou")
+        termin_hari = data.get("termin_hari", "14")
+        termin_terbilang = angka_ke_terbilang(termin_hari)
+
+        story = []
+        story.append(Paragraph("QUOTATION / PENAWARAN", title))
+        story.append(Paragraph(f"<b>No. Surat:</b> {nomor_surat}", normal))
+        story.append(Paragraph(f"<b>Tanggal:</b> {tanggal}", normal))
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("<b>Kepada Yth:</b>", normal))
+        story.append(Paragraph(f"<b>{nama}</b>", normal))
+        story.append(Paragraph(alamat, normal))
+        story.append(Spacer(1, 12))
+
+        # TABLE
+        table_data = [["No", "Jenis Limbah", "Kode", "Harga (Rp)", "Satuan"]]
+        for i, it in enumerate(items, 1):
+            table_data.append([
+                str(i),
+                it.get("jenis_limbah", ""),
+                it.get("kode_limbah", ""),
+                format_rupiah(it.get("harga", "")),
+                it.get("satuan", "Kg")
+            ])
+
+        # Biaya transport
+        table_data.append(["", "Biaya Transportasi", "", format_rupiah(biaya_transport), "ritase"])
+
+        # Biaya MoU (optional)
+        if biaya_mou:
+            table_data.append(["", "Biaya MoU", "", format_rupiah(biaya_mou), "Tahun"])
+
+        tbl = Table(table_data, colWidths=[1.2*cm, 8.0*cm, 2.2*cm, 3.2*cm, 2.0*cm])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.black),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("GRID", (0,0), (-1,-1), 0.75, colors.black),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("ALIGN", (0,0), (0,-1), "CENTER"),
+            ("ALIGN", (2,1), (2,-1), "CENTER"),
+            ("ALIGN", (3,1), (3,-1), "RIGHT"),
+        ]))
+
+        story.append(tbl)
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph(f"<b>Termin Pembayaran:</b> {termin_hari} ({termin_terbilang}) hari", small))
+        story.append(Paragraph("Catatan: Harga belum termasuk pajak (jika ada).", small))
+
+        doc.build(story)
+
+        if pdf_path.exists() and pdf_path.stat().st_size > 1000:
+            print(f"✅ PDF created (ReportLab): {pdf_path.name} ({pdf_path.stat().st_size} bytes)")
+            return f"{filename}.pdf"
+
+        print("❌ PDF ReportLab created but seems invalid/small")
+        return None
+
     except Exception as e:
-        print(f"  ✗ LibreOffice error: {e}")
+        print(f"❌ Error creating PDF with ReportLab: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        return None
+
+# =========================
+# (FUNGSI PDF LAMA KAMU BIARKAN ADA, TAPI TIDAK DIPAKAI DI LINUX)
+# =========================
+def create_pdf_libreoffice(docx_path, pdf_path):
+    return False
 
 def create_pdf_docx2pdf(docx_path, pdf_path):
-    """Method: docx2pdf (Windows/macOS only)"""
-    try:
-        print(f"  → Trying docx2pdf...")
-        docx_to_pdf(str(docx_path), str(pdf_path))
-        
-        if pdf_path.exists() and pdf_path.stat().st_size > 1000:
-            print(f"  ✓ docx2pdf succeeded")
-            return True
-        else:
-            print(f"  ✗ docx2pdf failed to create valid PDF")
-            return False
-    except Exception as e:
-        print(f"  ✗ docx2pdf failed: {e}")
-        return False
+    return False
 
 def create_pdf_pypandoc(docx_path, pdf_path):
-    """Method: pypandoc (Alternative converter)"""
-    try:
-        print(f"  → Trying pypandoc...")
-        pypandoc.convert_file(
-            str(docx_path),
-            'pdf',
-            outputfile=str(pdf_path),
-            extra_args=['--pdf-engine=xelatex']
-        )
-        
-        if pdf_path.exists() and pdf_path.stat().st_size > 1000:
-            print(f"  ✓ pypandoc succeeded")
-            return True
-        else:
-            print(f"  ✗ pypandoc failed to create valid PDF")
-            return False
-    except Exception as e:
-        print(f"  ✗ pypandoc failed: {e}")
-        return False
+    return False
 
-def create_pdf(filename):
+def create_pdf(filename, data_for_pdf=None):
     """
-    Convert DOCX to PDF with multiple fallback methods
-    Optimized for Linux/Render.com deployment
-    Returns: PDF filename if successful, None if failed
+    ✅ SEKARANG PDF UTAMA DI LINUX/RENDER: REPORTLAB
     """
-    if not PDF_AVAILABLE:
-        print("❌ PDF generation disabled - no converter available")
-        print("   For Render.com, add LibreOffice to your deployment")
-        print("   See: https://render.com/docs/native-environments")
+    if data_for_pdf is None:
         return None
-
-    docx_path = FILES_DIR / f"{filename}.docx"
-    pdf_path = FILES_DIR / f"{filename}.pdf"
-
-    # Check if DOCX exists
-    if not docx_path.exists():
-        print(f"❌ DOCX not found: {docx_path}")
-        return None
-
-    print(f"\n{'='*60}")
-    print(f"🔄 Converting to PDF: {filename}.docx")
-    print(f"{'='*60}")
-    print(f"📄 DOCX size: {docx_path.stat().st_size:,} bytes")
-    print(f"🔧 Primary method: {PDF_METHOD}")
-    print(f"💻 Platform: {platform.system()}")
-    print(f"{'='*60}")
-
-    try:
-        success = False
-        
-        # For Linux (Render.com), prioritize LibreOffice
-        if platform.system() == "Linux":
-            if LIBREOFFICE_PATH:
-                success = create_pdf_libreoffice(docx_path, pdf_path)
-            
-            # Fallback to pypandoc on Linux
-            if not success and pypandoc and PDF_METHOD != "libreoffice":
-                success = create_pdf_pypandoc(docx_path, pdf_path)
-        
-        # For Windows/macOS
-        else:
-            # Try primary method first
-            if PDF_METHOD == "docx2pdf" and docx_to_pdf:
-                success = create_pdf_docx2pdf(docx_path, pdf_path)
-            
-            elif PDF_METHOD == "libreoffice" and LIBREOFFICE_PATH:
-                success = create_pdf_libreoffice(docx_path, pdf_path)
-            
-            elif PDF_METHOD == "pypandoc" and pypandoc:
-                success = create_pdf_pypandoc(docx_path, pdf_path)
-            
-            # Try fallback methods if primary failed
-            if not success:
-                print(f"\n⚠️  Primary method failed, trying fallbacks...")
-                
-                # Try docx2pdf as fallback
-                if not success and docx_to_pdf and PDF_METHOD != "docx2pdf":
-                    success = create_pdf_docx2pdf(docx_path, pdf_path)
-                
-                # Try LibreOffice as fallback
-                if not success and LIBREOFFICE_PATH and PDF_METHOD != "libreoffice":
-                    success = create_pdf_libreoffice(docx_path, pdf_path)
-                
-                # Try pypandoc as fallback
-                if not success and pypandoc and PDF_METHOD != "pypandoc":
-                    success = create_pdf_pypandoc(docx_path, pdf_path)
-        
-        # Verify final result
-        if success and pdf_path.exists():
-            file_size = pdf_path.stat().st_size
-            if file_size > 1000:  # Minimum valid PDF
-                print(f"\n{'='*60}")
-                print(f"✅ PDF CREATED SUCCESSFULLY")
-                print(f"{'='*60}")
-                print(f"📁 File: {pdf_path.name}")
-                print(f"📊 Size: {file_size:,} bytes")
-                print(f"{'='*60}\n")
-                return f"{filename}.pdf"
-            else:
-                print(f"\n❌ PDF too small ({file_size} bytes) - likely corrupt")
-                return None
-        else:
-            print(f"\n{'='*60}")
-            print(f"❌ PDF CONVERSION FAILED")
-            print(f"{'='*60}")
-            if pdf_path.exists():
-                print(f"File exists but size: {pdf_path.stat().st_size} bytes")
-            else:
-                print(f"File not created at: {pdf_path}")
-            print(f"{'='*60}\n")
-            return None
-            
-    except Exception as e:
-        print(f"\n{'='*60}")
-        print(f"❌ PDF CONVERSION ERROR")
-        print(f"{'='*60}")
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
-        print(f"{'='*60}\n")
-        return None
+    return create_pdf_reportlab(data_for_pdf, filename)
 
 @app.route("/")
 def index():
@@ -1144,22 +1068,22 @@ def chat():
                     state['data']['termin_hari'] = '14'
 
             fname = f"Quotation_{re.sub(r'[^A-Za-z0-9]+', '_', state['data']['nama_perusahaan'])}_{uuid.uuid4().hex[:6]}"
-            
+
             # Create DOCX
             print(f"\n{'='*60}")
             print(f"📝 Creating documents for: {state['data']['nama_perusahaan']}")
             print(f"{'='*60}")
-            
+
             docx = create_docx(state['data'], fname)
             print(f"✅ DOCX created: {docx}")
-            
-            # Create PDF with detailed logging
-            pdf = create_pdf(fname)
+
+            # ✅ Create PDF (ReportLab, Linux safe)
+            pdf = create_pdf(fname, data_for_pdf=state['data'])
             if pdf:
                 print(f"✅ PDF created: {pdf}")
             else:
                 print(f"⚠️  PDF not created - continuing without PDF")
-            
+
             print(f"{'='*60}\n")
 
             conversations[sid] = {'step': 'idle', 'data': {}}
@@ -1197,20 +1121,7 @@ if __name__ == "__main__":
     print(f"📁 Template: {TEMPLATE_FILE.exists() and '✅ Found' or '❌ Missing'}")
     print(f"🔑 OpenRouter Key: {OPENROUTER_API_KEY and '✅ Set' or '❌ Not Set'}")
     print(f"🔎 Serper Key: {SERPER_API_KEY and '✅ Set' or '❌ Not Set'}")
-    print(f"📄 PDF Generation: {PDF_AVAILABLE and '✅ ENABLED' or '❌ DISABLED'}")
-    if PDF_AVAILABLE:
-        print(f"   Primary Method: {PDF_METHOD}")
-        if PDF_METHOD == "docx2pdf":
-            print(f"   Library: docx2pdf")
-        elif PDF_METHOD == "libreoffice":
-            print(f"   Path: {LIBREOFFICE_PATH}")
-            print(f"   ⚠️  Optimized for Linux/Render.com")
-        elif PDF_METHOD == "pypandoc":
-            print(f"   Library: pypandoc")
-    else:
-        print(f"   ⚠️  For Render.com deployment:")
-        print(f"   Add to render.yaml:")
-        print(f"   buildCommand: apt-get update && apt-get install -y libreoffice && pip install -r requirements.txt")
+    print(f"📄 PDF Generation: ✅ ENABLED (ReportLab - Linux Safe)")
     print(f"🗄️  Database: {len(LIMBAH_B3_DB)} jenis limbah B3")
     print(f"🔢 Current Counter: {load_counter()}")
     print(f"🌐 Port: {port}")
