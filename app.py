@@ -1276,15 +1276,16 @@ def chat():
     try:
         data = request.get_json() or {}
         text = (data.get("message", "") or "").strip()
-        history_id_in = data.get("history_id")  # ✅ NEW: agar chat bisa lanjut ke history yg sama
+        history_id_in = data.get("history_id")  
 
         if not text:
             return jsonify({"error": "Pesan kosong"}), 400
 
-        sid = session.get('sid')
+        sid = request.headers.get("X-Session-ID") or session.get("sid")
         if not sid:
             sid = str(uuid.uuid4())
-            session['sid'] = sid
+            session["sid"] = sid
+
 
         state = conversations.get(sid, {'step': 'idle', 'data': {}})
         lower = text.lower()
