@@ -138,9 +138,17 @@ def db_connect():
     conn.row_factory = sqlite3.Row
     return conn
 
+def _db_has_column(conn, table: str, column: str) -> bool:
+    cur = conn.cursor()
+    cur.execute(f"PRAGMA table_info({table})")
+    cols = [r[1] for r in cur.fetchall()]
+    return column in cols
+
 def init_db():
     conn = db_connect()
     cur = conn.cursor()
+
+    # base table
     cur.execute("""
         CREATE TABLE IF NOT EXISTS chat_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,39 +160,70 @@ def init_db():
         )
     """)
     conn.commit()
+
+    # ✅ MIGRATION: add messages_json + state_json if missing
+    if not _db_has_column(conn, "chat_history", "messages_json"):
+        cur.execute("ALTER TABLE chat_history ADD COLUMN messages_json TEXT NOT NULL DEFAULT '[]'")
+    if not _db_has_column(conn, "chat_history", "state_json"):
+        cur.execute("ALTER TABLE chat_history ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
+
+    conn.commit()
     conn.close()
 
-def db_insert_history(title: str, task_type: str, data: dict, files: list):
+def db_insert_history(title: str, task_type: str, data: dict, files: list, messages: list = None, state: dict = None):
     conn = db_connect()
     cur = conn.cursor()
     created_at = datetime.now().isoformat()
     cur.execute("""
-        INSERT INTO chat_history (title, task_type, created_at, data_json, files_json)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO chat_history (title, task_type, created_at, data_json, files_json, messages_json, state_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
         title,
         task_type,
         created_at,
-        json.dumps(data, ensure_ascii=False),
-        json.dumps(files, ensure_ascii=False),
+        json.dumps(data or {}, ensure_ascii=False),
+        json.dumps(files or [], ensure_ascii=False),
+        json.dumps(messages or [], ensure_ascii=False),
+        json.dumps(state or {}, ensure_ascii=False),
     ))
     conn.commit()
     new_id = cur.lastrowid
     conn.close()
     return new_id
 
-def db_list_histories(limit=200):
+def db_list_histories(limit=200, q: str = None):
     conn = db_connect()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT id, title, task_type, created_at
-        FROM chat_history
-        ORDER BY id DESC
-        LIMIT ?
-    """, (limit,))
+    if q:
+        cur.execute("""
+            SELECT id, title, task_type, created_at
+            FROM chat_history
+            WHERE title LIKE ?
+            ORDER BY id DESC
+            LIMIT ?
+        """, (f"%{q}%", limit))
+    else:
+        cur.execute("""
+            SELECT id, title, task_type, created_at
+            FROM chat_history
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,))
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+def db_get_history_detail(history_id: int):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, title, task_type, created_at, data_json, files_json, messages_json, state_json
+        FROM chat_history
+        WHERE id = ?
+    """, (history_id,))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 def db_update_title(history_id: int, new_title: str):
     conn = db_connect()
@@ -203,6 +242,39 @@ def db_delete_history(history_id: int):
     changes = cur.rowcount
     conn.close()
     return changes > 0
+
+def db_append_message(history_id: int, sender: str, text: str, files: list = None):
+    detail = db_get_history_detail(history_id)
+    if not detail:
+        return False
+
+    try:
+        messages = json.loads(detail.get("messages_json") or "[]")
+    except:
+        messages = []
+
+    messages.append({
+        "id": uuid.uuid4().hex[:12],
+        "sender": sender,
+        "text": text,
+        "files": files or [],
+        "timestamp": datetime.now().isoformat()
+    })
+
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE chat_history SET messages_json = ? WHERE id = ?", (json.dumps(messages, ensure_ascii=False), history_id))
+    conn.commit()
+    ok = cur.rowcount > 0
+    conn.close()
+    return ok
+
+def db_update_state(history_id: int, state: dict):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE chat_history SET state_json = ? WHERE id = ?", (json.dumps(state or {}, ensure_ascii=False), history_id))
+    conn.commit()
+    conn.close()
 
 init_db()
 
@@ -485,9 +557,7 @@ def parse_termin_days(text: str, default: int = 14, min_days: int = 1, max_days:
     if not s:
         return str(default)
 
-    # kalau input berupa kata "dua puluh" dll, convert dulu
     converted = convert_voice_to_number(s)
-    # ambil integer pertama dari string apa pun (mis: "14 200", "14hari", "14,200")
     m = re.search(r'\d+', str(converted).replace('.', '').replace(',', ''))
     if not m:
         return str(default)
@@ -900,7 +970,6 @@ def create_docx(data, filename):
                 for old_text, new_text in header_replacements.items():
                     content = content.replace(old_text, new_text)
 
-                # ✅ termin fix di header/footer juga
                 content = content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
                 ctx_phrase = "Termin Pembayaran Paling Lambat"
                 content = replace_wt_text_in_context(content, ctx_phrase, "14", termin_hari)
@@ -1099,8 +1168,30 @@ def index():
 @app.route("/api/history", methods=["GET"])
 def api_history_list():
     try:
-        items = db_list_histories(limit=200)
+        q = (request.args.get("q") or "").strip()
+        items = db_list_histories(limit=200, q=q if q else None)
         return jsonify({"items": items})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ✅ NEW: detail history + messages + files
+@app.route("/api/history/<int:history_id>", methods=["GET"])
+def api_history_detail(history_id):
+    try:
+        detail = db_get_history_detail(history_id)
+        if not detail:
+            return jsonify({"error": "history tidak ditemukan"}), 404
+
+        return jsonify({
+            "id": detail["id"],
+            "title": detail["title"],
+            "task_type": detail["task_type"],
+            "created_at": detail["created_at"],
+            "data": json.loads(detail.get("data_json") or "{}"),
+            "files": json.loads(detail.get("files_json") or "[]"),
+            "messages": json.loads(detail.get("messages_json") or "[]"),
+            "state": json.loads(detail.get("state_json") or "{}"),
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1129,11 +1220,63 @@ def api_history_delete(history_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ✅ NEW: Documents list (gabung semua files dari history)
+@app.route("/api/documents", methods=["GET"])
+def api_documents():
+    try:
+        q = (request.args.get("q") or "").strip().lower()
+        items = db_list_histories(limit=500)
+
+        docs = []
+        for h in items:
+            detail = db_get_history_detail(int(h["id"]))
+            if not detail:
+                continue
+            try:
+                files = json.loads(detail.get("files_json") or "[]")
+            except:
+                files = []
+            for f in files:
+                # f: {type, filename, url}
+                filename = (f.get("filename") or "").strip()
+                if not filename:
+                    continue
+                title = detail.get("title") or ""
+                task_type = detail.get("task_type") or ""
+                created_at = detail.get("created_at") or ""
+
+                row = {
+                    "history_id": int(detail["id"]),
+                    "history_title": title,
+                    "task_type": task_type,
+                    "created_at": created_at,
+                    "type": f.get("type"),
+                    "filename": filename,
+                    "url": f.get("url"),
+                }
+
+                if q:
+                    hay = f"{title} {filename} {task_type}".lower()
+                    if q not in hay:
+                        continue
+
+                docs.append(row)
+
+        # terbaru di atas
+        docs.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+        return jsonify({"items": docs})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# =========================
+# ✅ CHAT
+# =========================
 @app.route("/api/chat", methods=["POST"])
 def chat():
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         text = (data.get("message", "") or "").strip()
+        history_id_in = data.get("history_id")  # ✅ NEW: agar chat bisa lanjut ke history yg sama
 
         if not text:
             return jsonify({"error": "Pesan kosong"}), 400
@@ -1146,6 +1289,14 @@ def chat():
         state = conversations.get(sid, {'step': 'idle', 'data': {}})
         lower = text.lower()
 
+        # ✅ kalau client kirim history_id, simpan pesan user ke history itu
+        if history_id_in:
+            try:
+                db_append_message(int(history_id_in), "user", text, files=[])
+                db_update_state(int(history_id_in), state)
+            except:
+                pass
+
         # Start conversation
         if 'quotation' in lower or 'penawaran' in lower or 'buat' in lower:
             nomor_depan = get_next_nomor()
@@ -1157,7 +1308,28 @@ def chat():
                 'bulan_romawi': now.strftime('%m')
             }
             conversations[sid] = state
-            return jsonify({"text": f"Baik, saya bantu buatkan quotation.<br><br>✅ Nomor Surat: <b>{nomor_depan}</b><br><br>❓ <b>1. Nama Perusahaan?</b>"})
+
+            out_text = f"Baik, saya bantu buatkan quotation.<br><br>✅ Nomor Surat: <b>{nomor_depan}</b><br><br>❓ <b>1. Nama Perusahaan?</b>"
+
+            # ✅ kalau belum ada history_id, buat history baru untuk chat ini
+            history_id_created = None
+            if not history_id_in:
+                history_id_created = db_insert_history(
+                    title="Chat Baru",
+                    task_type=data.get("taskType") or "penawaran",
+                    data={},
+                    files=[],
+                    messages=[
+                        {"id": uuid.uuid4().hex[:12], "sender": "user", "text": text, "files": [], "timestamp": datetime.now().isoformat()},
+                        {"id": uuid.uuid4().hex[:12], "sender": "assistant", "text": re.sub(r'<br\s*/?>', '\n', out_text), "files": [], "timestamp": datetime.now().isoformat()},
+                    ],
+                    state=state
+                )
+            else:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_created or history_id_in})
 
         # Step 1: Nama Perusahaan (alamat auto: Serper -> AI -> Di Tempat)
         if state['step'] == 'nama_perusahaan':
@@ -1174,9 +1346,17 @@ def chat():
             state['data']['current_item'] = {}
             conversations[sid] = state
 
-            return jsonify({
-                "text": f"✅ Nama: <b>{text}</b><br>✅ Alamat: <b>{alamat}</b><br><br>📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
-            })
+            out_text = (
+                f"✅ Nama: <b>{text}</b><br>✅ Alamat: <b>{alamat}</b><br><br>"
+                f"📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
+                f"<i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 2: Jenis/Kode Limbah
         elif state['step'] == 'jenis_kode_limbah':
@@ -1188,7 +1368,13 @@ def chat():
                 state['data']['current_item']['satuan'] = data_limbah['satuan']
                 state['step'] = 'harga'
                 conversations[sid] = state
-                return jsonify({"text": f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"})
+                out_text = f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"
+
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+
+                return jsonify({"text": out_text, "history_id": history_id_in})
             else:
                 kode, data_limbah = find_limbah_by_jenis(text)
 
@@ -1198,9 +1384,26 @@ def chat():
                     state['data']['current_item']['satuan'] = data_limbah['satuan']
                     state['step'] = 'harga'
                     conversations[sid] = state
-                    return jsonify({"text": f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"})
+                    out_text = f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"
+
+                    if history_id_in:
+                        db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                        db_update_state(int(history_id_in), state)
+
+                    return jsonify({"text": out_text, "history_id": history_id_in})
                 else:
-                    return jsonify({"text": f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan dalam database.<br><br>Silakan coba lagi dengan:<br>• Kode limbah (contoh: A102d, B105d)<br>• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)"})
+                    out_text = (
+                        f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan dalam database.<br><br>"
+                        "Silakan coba lagi dengan:<br>"
+                        "• Kode limbah (contoh: A102d, B105d)<br>"
+                        "• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)"
+                    )
+
+                    if history_id_in:
+                        db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                        db_update_state(int(history_id_in), state)
+
+                    return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 3: Harga
         elif state['step'] == 'harga':
@@ -1213,7 +1416,13 @@ def chat():
             conversations[sid] = state
 
             harga_formatted = format_rupiah(harga_converted)
-            return jsonify({"text": f"✅ Item #{num} tersimpan!<br>💰 Harga: <b>Rp {harga_formatted}</b><br><br>❓ <b>Tambah item lagi?</b> (ya/tidak)"})
+            out_text = f"✅ Item #{num} tersimpan!<br>💰 Harga: <b>Rp {harga_formatted}</b><br><br>❓ <b>Tambah item lagi?</b> (ya/tidak)"
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 4: Tambah Item?
         elif state['step'] == 'tambah_item':
@@ -1222,11 +1431,23 @@ def chat():
                 state['step'] = 'jenis_kode_limbah'
                 state['data']['current_item'] = {}
                 conversations[sid] = state
-                return jsonify({"text": f"📦 <b>Item #{num+1}</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"})
+                out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
+
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+
+                return jsonify({"text": out_text, "history_id": history_id_in})
             else:
                 state['step'] = 'harga_transportasi'
                 conversations[sid] = state
-                return jsonify({"text": f"✅ Total: <b>{len(state['data']['items_limbah'])} item</b><br><br>❓ <b>4. Biaya Transportasi (Rp)?</b><br><i>Satuan: ritase</i>"})
+                out_text = f"✅ Total: <b>{len(state['data']['items_limbah'])} item</b><br><br>❓ <b>4. Biaya Transportasi (Rp)?</b><br><i>Satuan: ritase</i>"
+
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+
+                return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 5: Harga Transportasi
         elif state['step'] == 'harga_transportasi':
@@ -1235,19 +1456,37 @@ def chat():
             state['step'] = 'tanya_mou'
             conversations[sid] = state
             transportasi_formatted = format_rupiah(transportasi_converted)
-            return jsonify({"text": f"✅ Transportasi: <b>Rp {transportasi_formatted}/ritase</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"})
+            out_text = f"✅ Transportasi: <b>Rp {transportasi_formatted}/ritase</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 6: Tanya MoU
         elif state['step'] == 'tanya_mou':
             if 'ya' in lower or 'iya' in lower:
                 state['step'] = 'harga_mou'
                 conversations[sid] = state
-                return jsonify({"text": "❓ <b>Biaya MoU (Rp)?</b><br><i>Satuan: Tahun</i>"})
+                out_text = "❓ <b>Biaya MoU (Rp)?</b><br><i>Satuan: Tahun</i>"
+
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+
+                return jsonify({"text": out_text, "history_id": history_id_in})
             else:
                 state['data']['harga_mou'] = None
                 state['step'] = 'tanya_termin'
                 conversations[sid] = state
-                return jsonify({"text": "❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"})
+                out_text = "❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"
+
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+
+                return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 7: Harga MoU
         elif state['step'] == 'harga_mou':
@@ -1257,14 +1496,19 @@ def chat():
             conversations[sid] = state
 
             mou_formatted = format_rupiah(mou_converted)
-            return jsonify({"text": f"✅ MoU: <b>Rp {mou_formatted}/Tahun</b><br><br>❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"})
+            out_text = f"✅ MoU: <b>Rp {mou_formatted}/Tahun</b><br><br>❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
 
         # Step 8: Tanya Termin
         elif state['step'] == 'tanya_termin':
             if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
                 state['data']['termin_hari'] = '14'
             else:
-                # ✅ FIX: input "14 200" -> 14
                 state['data']['termin_hari'] = parse_termin_days(text, default=14, min_days=1, max_days=365)
 
             fname = f"Quotation_{re.sub(r'[^A-Za-z0-9]+', '_', state['data']['nama_perusahaan'])}_{uuid.uuid4().hex[:6]}"
@@ -1294,21 +1538,51 @@ def chat():
             history_title = f"Penawaran {nama_pt}" if nama_pt else "Penawaran"
             history_task_type = "penawaran"
 
-            history_id = db_insert_history(
-                title=history_title,
-                task_type=history_task_type,
-                data=state['data'],
-                files=files
-            )
+            # ✅ jika sudah ada history_id (chat sedang berjalan) -> update title + files + data, bukan insert baru
+            if history_id_in:
+                conn = db_connect()
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE chat_history
+                    SET title = ?, task_type = ?, data_json = ?, files_json = ?
+                    WHERE id = ?
+                """, (
+                    history_title,
+                    history_task_type,
+                    json.dumps(state['data'], ensure_ascii=False),
+                    json.dumps(files, ensure_ascii=False),
+                    int(history_id_in),
+                ))
+                conn.commit()
+                conn.close()
+                history_id = int(history_id_in)
+            else:
+                history_id = db_insert_history(
+                    title=history_title,
+                    task_type=history_task_type,
+                    data=state['data'],
+                    files=files,
+                    messages=[],
+                    state={}
+                )
 
             termin_terbilang = angka_ke_terbilang(state['data']['termin_hari'])
+            out_text = f"✅ Termin: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>🎉 <b>Quotation berhasil dibuat!</b>"
+
+            # ✅ simpan pesan assistant + file card ke history
+            db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+
             return jsonify({
-                "text": f"✅ Termin: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>🎉 <b>Quotation berhasil dibuat!</b>",
+                "text": out_text,
                 "files": files,
                 "history_id": history_id
             })
 
-        return jsonify({"text": call_ai(text)})
+        # fallback AI
+        ai_out = call_ai(text)
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", ai_out, files=[])
+        return jsonify({"text": ai_out, "history_id": history_id_in})
 
     except Exception as e:
         print(f"ERROR: {e}")
