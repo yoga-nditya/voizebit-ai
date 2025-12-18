@@ -12,6 +12,7 @@ import zipfile
 import subprocess
 import platform
 import sqlite3
+from html import unescape
 
 # ========== PDF GENERATION - MULTIPLE METHODS ==========
 PDF_AVAILABLE = False
@@ -224,6 +225,27 @@ def db_get_history_detail(history_id: int):
     row = cur.fetchone()
     conn.close()
     return dict(row) if row else None
+
+def plain(s: str) -> str:
+    """Ubah HTML sederhana (<br>, <b>, <i>, dll) jadi teks biasa tanpa tag."""
+    if not s:
+        return ""
+    s = str(s)
+
+    # decode entity dulu (mis: &lt;b&gt;)
+    s = unescape(s)
+
+    # <br> jadi newline
+    s = re.sub(r'<br\s*/?>', '\n', s, flags=re.IGNORECASE)
+
+    # hapus semua tag html
+    s = re.sub(r'<[^>]+>', '', s)
+
+    # rapikan whitespace
+    s = s.replace('\r', '')
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    s = re.sub(r'[ \t]+', ' ', s)
+    return s.strip()
 
 def db_update_title(history_id: int, new_title: str):
     conn = db_connect()
