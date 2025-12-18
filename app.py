@@ -51,17 +51,13 @@ def check_libreoffice():
                     print(f"✅ Found LibreOffice at: {p}")
                     return p
         else:
-            # Linux/macOS - try multiple commands
             commands = ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice']
-
             for cmd in commands:
                 try:
-                    # Try direct path first
                     if os.path.exists(cmd) and os.access(cmd, os.X_OK):
                         print(f"✅ Found LibreOffice at: {cmd}")
                         return cmd
 
-                    # Try using 'which' command
                     result = subprocess.run(
                         ['which', cmd],
                         capture_output=True,
@@ -75,7 +71,6 @@ def check_libreoffice():
                 except Exception:
                     continue
 
-            # Try to find via command -v (alternative to which)
             for cmd in ['libreoffice', 'soffice']:
                 try:
                     result = subprocess.run(
@@ -108,7 +103,6 @@ load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
 
-# ✅ Serper Key (Google Search API)
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 
 BASE_DIR = Path(__file__).parent
@@ -116,8 +110,6 @@ FILES_DIR = BASE_DIR / "static" / "files"
 TEMPLATE_FILE = BASE_DIR / "template_quotation.docx"
 TEMP_DIR = BASE_DIR / "temp"
 COUNTER_FILE = BASE_DIR / "counter.json"
-
-# ✅ DB PATH (SQLite)
 DB_FILE = BASE_DIR / "chat_history.db"
 
 FILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -212,7 +204,6 @@ def db_delete_history(history_id: int):
     conn.close()
     return changes > 0
 
-# init db at startup
 init_db()
 
 # ===== COUNTER MANAGEMENT =====
@@ -222,7 +213,6 @@ def load_counter():
         try:
             with open(COUNTER_FILE, 'r') as f:
                 data = json.load(f)
-                # ✅ FIX: default 0 supaya format bisa 000
                 return int(data.get('counter', 0))
         except:
             return 0
@@ -246,7 +236,7 @@ def get_next_nomor():
     if counter > 21:
         counter = 0
 
-    nomor = str(counter).zfill(3)  # 000, 001, ... 021
+    nomor = str(counter).zfill(3)  # 000..021
     next_counter = (counter + 1) % 22
     save_counter(next_counter)
     return nomor
@@ -344,50 +334,35 @@ LIMBAH_B3_DB = {
 }
 
 def find_limbah_by_jenis(jenis_query):
-    """Cari kode limbah berdasarkan nama/jenis limbah"""
     jenis_lower = jenis_query.lower()
 
-    # Exact match
     for kode, data in LIMBAH_B3_DB.items():
         if data['jenis'].lower() == jenis_lower:
             return kode, data
 
-    # Partial match
     for kode, data in LIMBAH_B3_DB.items():
         if jenis_lower in data['jenis'].lower() or data['jenis'].lower() in jenis_lower:
             return kode, data
 
-    # Keyword match
     keywords = jenis_lower.split()
     for kode, data in LIMBAH_B3_DB.items():
         jenis_db_lower = data['jenis'].lower()
         match_count = sum(1 for kw in keywords if kw in jenis_db_lower)
-        if match_count >= 2:  # At least 2 keywords match
+        if match_count >= 2:
             return kode, data
 
     return None, None
 
 def normalize_limbah_code(text):
-    """
-    Normalisasi input voice menjadi format kode limbah yang benar
-    Contoh: 'A303 strip 3' -> 'A303-3'
-            'A303 minus 3' -> 'A303-3'
-            'B105 garis d' -> 'B105d'
-    """
     text_clean = text.strip().upper()
-
     strip_words = ['STRIP', 'MINUS', 'MIN', 'DASH', 'SAMPAI', 'HINGGA', 'GARIS']
-
     for word in strip_words:
         text_clean = re.sub(r'\b' + word + r'\b', '-', text_clean, flags=re.IGNORECASE)
-
     text_clean = re.sub(r'\s*-\s*', '-', text_clean)
     text_clean = re.sub(r'\s+', '', text_clean)
-
     return text_clean
 
 def find_limbah_by_kode(kode_query):
-    """Cari jenis limbah berdasarkan kode dengan normalisasi voice input"""
     kode_normalized = normalize_limbah_code(kode_query)
 
     if kode_normalized in LIMBAH_B3_DB:
@@ -414,10 +389,6 @@ def angka_ke_romawi(bulan):
     return romawi.get(str(bulan), 'I')
 
 def angka_ke_terbilang(angka):
-    """
-    Convert angka ke terbilang Indonesia
-    Contoh: 14 -> 'empat belas', 30 -> 'tiga puluh'
-    """
     try:
         n = int(angka)
     except:
@@ -448,21 +419,11 @@ def angka_ke_terbilang(angka):
             result = 'seratus'
         else:
             result = satuan[ratusan] + ' ratus'
-
         if sisanya > 0:
             result += ' ' + angka_ke_terbilang(sisanya)
         return result
 
     return str(n)
-
-def format_tanggal_indonesia():
-    bulan_id = {
-        '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
-        '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
-        '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
-    }
-    now = datetime.now()
-    return f"Tangerang, {now.day} {bulan_id[now.strftime('%m')]} {now.year}"
 
 def convert_voice_to_number(text):
     text_lower = text.lower().strip()
@@ -518,6 +479,24 @@ def convert_voice_to_number(text):
 
     return text
 
+# ✅ khusus termin: ambil angka pertama saja (jadi input "14 200" -> 14)
+def parse_termin_days(text: str, default: int = 14, min_days: int = 1, max_days: int = 365) -> str:
+    s = (text or "").strip()
+    if not s:
+        return str(default)
+
+    # kalau input berupa kata "dua puluh" dll, convert dulu
+    converted = convert_voice_to_number(s)
+    # ambil integer pertama dari string apa pun (mis: "14 200", "14hari", "14,200")
+    m = re.search(r'\d+', str(converted).replace('.', '').replace(',', ''))
+    if not m:
+        return str(default)
+
+    val = int(m.group(0))
+    if val < min_days or val > max_days:
+        return str(default)
+    return str(val)
+
 def call_ai(text, system_prompt=None):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"}
@@ -536,8 +515,7 @@ def call_ai(text, system_prompt=None):
     return resp.json()["choices"][0]["message"]["content"]
 
 # =========================
-# ✅ SEARCH ALAMAT VIA SERPER (TANPA GMAPS)
-# Kalau gagal: return "" (kosong)
+# ✅ SEARCH ALAMAT VIA SERPER
 # =========================
 def _clean_address(addr: str) -> str:
     if not addr:
@@ -547,9 +525,6 @@ def _clean_address(addr: str) -> str:
     return addr
 
 def _extract_address_from_text(text: str) -> str:
-    """
-    Heuristik sederhana: cari baris/fragmen alamat Indonesia dari snippet.
-    """
     if not text:
         return ""
     t = text.replace('\n', ' ')
@@ -568,12 +543,6 @@ def _extract_address_from_text(text: str) -> str:
     return ""
 
 def search_company_address(company_name: str) -> str:
-    """
-    Cari alamat perusahaan dengan Serper (Google Search API).
-    Return:
-      - alamat string jika ketemu
-      - "" jika tidak ketemu
-    """
     name = (company_name or "").strip()
     if len(name) < 3:
         return ""
@@ -584,29 +553,15 @@ def search_company_address(company_name: str) -> str:
 
     try:
         url = "https://google.serper.dev/search"
-        headers = {
-            "X-API-KEY": SERPER_API_KEY,
-            "Content-Type": "application/json"
-        }
+        headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
 
-        # ✅ sedikit lebih agresif
-        queries = [
-            f"{name} alamat",
-            f"\"{name}\" alamat kantor"
-        ]
-
+        queries = [f"{name} alamat", f"\"{name}\" alamat kantor"]
         for q in queries:
-            payload = {
-                "q": q,
-                "gl": "id",
-                "hl": "id",
-                "num": 7
-            }
+            payload = {"q": q, "gl": "id", "hl": "id", "num": 7}
             r = requests.post(url, headers=headers, json=payload, timeout=30)
             r.raise_for_status()
             data = r.json()
 
-            # 1) knowledgeGraph
             kg = data.get("knowledgeGraph") or {}
             for key in ["address", "formattedAddress"]:
                 if isinstance(kg.get(key), str):
@@ -625,7 +580,6 @@ def search_company_address(company_name: str) -> str:
                 if len(addr) >= 10:
                     return addr
 
-            # 2) places/local
             places = data.get("places") or data.get("local") or []
             if isinstance(places, list) and places:
                 p0 = places[0] or {}
@@ -634,7 +588,6 @@ def search_company_address(company_name: str) -> str:
                     if len(addr) >= 10:
                         return addr
 
-            # 3) organic snippet/title
             organic = data.get("organic") or []
             for item in organic:
                 if not isinstance(item, dict):
@@ -650,38 +603,28 @@ def search_company_address(company_name: str) -> str:
         print(f"Error searching address (Serper): {e}")
         return ""
 
-# ✅ fallback alamat via OpenRouter
 def search_company_address_ai(company_name: str) -> str:
-    """
-    Fallback kalau Serper gagal: minta AI menuliskan alamat jika yakin.
-    Jika tidak tahu / ragu, return "".
-    """
     try:
         name = (company_name or "").strip()
         if len(name) < 3 or not OPENROUTER_API_KEY:
             return ""
 
         system_prompt = (
-            "Anda adalah asisten yang mengekstrak alamat perusahaan di Indonesia.\n"
-            "Tugas: berikan alamat lengkap (satu baris) untuk nama perusahaan yang diberikan jika Anda yakin.\n"
-            "Jika tidak tahu / tidak yakin, balas dengan string kosong saja.\n"
-            "Jangan menambahkan kata lain selain alamat."
+            "Tulis alamat lengkap kantor pusat perusahaan di Indonesia jika Anda yakin.\n"
+            "Jika tidak yakin, balas kosong.\n"
+            "Jawaban hanya alamat satu baris."
         )
         out = call_ai(name, system_prompt=system_prompt).strip()
         out = _clean_address(out)
-        if len(out) >= 10:
-            return out
-        return ""
+        return out if len(out) >= 10 else ""
     except Exception as e:
         print(f"AI address fallback error: {e}")
         return ""
 
 def format_rupiah(angka_str):
     angka_clean = re.sub(r'[^\d]', '', str(angka_str))
-
     if not angka_clean:
         return angka_str
-
     try:
         angka_int = int(angka_clean)
         formatted = f"{angka_int:,}".replace(',', '.')
@@ -699,14 +642,9 @@ def escape_xml(text):
     return text
 
 # =========================
-# ✅ FIX TERMIN SPLIT-RUN (NEW)
+# ✅ FIX TERMIN untuk template split <w:t>
 # =========================
-def replace_wt_text_in_context(xml: str, context_phrase: str, old_text: str, new_text: str, window: int = 2000, max_repl: int = 10) -> str:
-    """
-    Replace text di dalam <w:t>OLD</w:t> menjadi <w:t>NEW</w:t>
-    hanya jika di sekitar match ada context_phrase.
-    Cocok untuk template yang memecah kalimat menjadi beberapa <w:t>.
-    """
+def replace_wt_text_in_context(xml: str, context_phrase: str, old_text: str, new_text: str, window: int = 3000, max_repl: int = 30) -> str:
     if not xml or not context_phrase or old_text is None:
         return xml
 
@@ -740,6 +678,32 @@ def replace_wt_text_in_context(xml: str, context_phrase: str, old_text: str, new
 
     return xml
 
+def replace_split_digits_in_context(xml: str, context_phrase: str, digits: str, new_digits: str, window: int = 3000) -> str:
+    if not xml or not digits or len(digits) != 2:
+        return xml
+
+    d1, d2 = digits[0], digits[1]
+    ctx = context_phrase.lower()
+    xml_lower = xml.lower()
+
+    pattern = (
+        r'(<w:t[^>]*>)\s*' + re.escape(d1) + r'\s*(</w:t>)'
+        r'(\s*</w:r>\s*<w:r[^>]*>\s*(?:<w:rPr>.*?</w:rPr>)?\s*)'
+        r'(<w:t[^>]*>)\s*' + re.escape(d2) + r'\s*(</w:t>)'
+    )
+    rx = re.compile(pattern, re.IGNORECASE | re.DOTALL)
+
+    def _repl(m):
+        start = m.start()
+        end = m.end()
+        w_start = max(0, start - window)
+        w_end = min(len(xml), end + window)
+        if ctx not in xml_lower[w_start:w_end]:
+            return m.group(0)
+        return f"{m.group(1)}{new_digits}{m.group(2)}"
+
+    return rx.sub(_repl, xml)
+
 def create_docx(data, filename):
     filepath = FILES_DIR / f"{filename}.docx"
     temp_extract = TEMP_DIR / f"extract_{uuid.uuid4().hex[:8]}"
@@ -762,7 +726,6 @@ def create_docx(data, filename):
         harga_mou = format_rupiah(data.get('harga_mou', '')) if data.get('harga_mou') else None
 
         doc_xml_path = temp_extract / "word" / "document.xml"
-
         with open(doc_xml_path, 'r', encoding='utf-8') as f:
             doc_content = f.read()
 
@@ -775,17 +738,23 @@ def create_docx(data, filename):
         doc_content = doc_content.replace(f'>{old_alamat}</w:t>', f'>{escape_xml(alamat_perusahaan)}</w:t>')
         doc_content = doc_content.replace('>28 November </w:t>', f'>{now.day} {bulan_id[now.strftime("%m")]} </w:t>', 1)
 
-        # ✅ Termin dynamic (FIX template split-run)
+        # ✅ TERMIN FIX (pasti berubah walau split <w:t>)
         termin_hari = data.get('termin_hari', '14')
         termin_terbilang = angka_ke_terbilang(termin_hari)
+        print("DEBUG_TERMIN_DATA:", termin_hari, termin_terbilang)
 
-        # fallback kalau ada bentuk utuh (jarang)
         doc_content = doc_content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
 
-        # FIX utama: karena template terpecah menjadi beberapa <w:t>
         ctx_phrase = "Termin Pembayaran Paling Lambat"
         doc_content = replace_wt_text_in_context(doc_content, ctx_phrase, "14", termin_hari)
         doc_content = replace_wt_text_in_context(doc_content, ctx_phrase, "empat belas", termin_terbilang)
+        doc_content = replace_split_digits_in_context(doc_content, ctx_phrase, "14", termin_hari)
+
+        m = re.search(
+            r'Termin Pembayaran Paling Lambat.*?<w:t[^>]*>\s*(\d+)\s*</w:t>.*?\(\s*</w:t>.*?<w:t[^>]*>\s*([^<]+?)\s*</w:t>',
+            doc_content, re.IGNORECASE | re.DOTALL
+        )
+        print("DEBUG_TERMIN_AFTER_XML:", (m.group(1), m.group(2)) if m else "NOT_FOUND")
 
         table_start_pattern = r'<w:tbl>(.*?Jenis Limbah.*?)</w:tbl>'
         table_match = re.search(table_start_pattern, doc_content, re.DOTALL)
@@ -813,7 +782,6 @@ def create_docx(data, filename):
                 </w:tcBorders>'''
 
                 new_rows_xml = ""
-
                 items = data.get('items_limbah', [])
                 for idx, item in enumerate(items, 1):
                     harga_formatted = format_rupiah(item.get('harga', ''))
@@ -915,7 +883,6 @@ def create_docx(data, filename):
             f.write(doc_content)
 
         word_dir = temp_extract / "word"
-
         header_replacements = {
             '>027</w:t>': f'>{data.get("nomor_depan", "000")}</w:t>',
             '>IX</w:t>': f'>{bulan_romawi}</w:t>',
@@ -933,11 +900,12 @@ def create_docx(data, filename):
                 for old_text, new_text in header_replacements.items():
                     content = content.replace(old_text, new_text)
 
-                # ✅ FIX termin split-run juga kalau ada di header/footer
+                # ✅ termin fix di header/footer juga
                 content = content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
                 ctx_phrase = "Termin Pembayaran Paling Lambat"
                 content = replace_wt_text_in_context(content, ctx_phrase, "14", termin_hari)
                 content = replace_wt_text_in_context(content, ctx_phrase, "empat belas", termin_terbilang)
+                content = replace_split_digits_in_context(content, ctx_phrase, "14", termin_hari)
 
                 with open(xml_file, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -955,14 +923,12 @@ def create_docx(data, filename):
         import traceback
         traceback.print_exc()
         raise
-
     finally:
         if temp_extract.exists():
             shutil.rmtree(temp_extract)
 
-# ========== IMPROVED PDF GENERATION - OPTIMIZED FOR RENDER.COM ==========
+# ========== PDF GENERATION ==========
 def create_pdf_libreoffice(docx_path, pdf_path):
-    """Method: LibreOffice headless - PRIMARY for Linux/Render.com"""
     try:
         print(f"  → Converting with LibreOffice...")
         print(f"     Path: {LIBREOFFICE_PATH}")
@@ -1027,7 +993,6 @@ def create_pdf_libreoffice(docx_path, pdf_path):
         return False
 
 def create_pdf_docx2pdf(docx_path, pdf_path):
-    """Method: docx2pdf (Windows/macOS only)"""
     try:
         print(f"  → Trying docx2pdf...")
         docx_to_pdf(str(docx_path), str(pdf_path))
@@ -1043,7 +1008,6 @@ def create_pdf_docx2pdf(docx_path, pdf_path):
         return False
 
 def create_pdf_pypandoc(docx_path, pdf_path):
-    """Method: pypandoc (Alternative converter)"""
     try:
         print(f"  → Trying pypandoc...")
         pypandoc.convert_file(
@@ -1064,15 +1028,8 @@ def create_pdf_pypandoc(docx_path, pdf_path):
         return False
 
 def create_pdf(filename):
-    """
-    Convert DOCX to PDF with multiple fallback methods
-    Optimized for Linux/Render.com deployment
-    Returns: PDF filename if successful, None if failed
-    """
     if not PDF_AVAILABLE:
         print("❌ PDF generation disabled - no converter available")
-        print("   For Render.com, add LibreOffice to your deployment")
-        print("   See: https://render.com/docs/native-environments")
         return None
 
     docx_path = FILES_DIR / f"{filename}.docx"
@@ -1096,64 +1053,40 @@ def create_pdf(filename):
         if platform.system() == "Linux":
             if LIBREOFFICE_PATH:
                 success = create_pdf_libreoffice(docx_path, pdf_path)
-
             if not success and pypandoc and PDF_METHOD != "libreoffice":
                 success = create_pdf_pypandoc(docx_path, pdf_path)
-
         else:
             if PDF_METHOD == "docx2pdf" and docx_to_pdf:
                 success = create_pdf_docx2pdf(docx_path, pdf_path)
-
             elif PDF_METHOD == "libreoffice" and LIBREOFFICE_PATH:
                 success = create_pdf_libreoffice(docx_path, pdf_path)
-
             elif PDF_METHOD == "pypandoc" and pypandoc:
                 success = create_pdf_pypandoc(docx_path, pdf_path)
 
             if not success:
-                print(f"\n⚠️  Primary method failed, trying fallbacks...")
-
                 if not success and docx_to_pdf and PDF_METHOD != "docx2pdf":
                     success = create_pdf_docx2pdf(docx_path, pdf_path)
-
                 if not success and LIBREOFFICE_PATH and PDF_METHOD != "libreoffice":
                     success = create_pdf_libreoffice(docx_path, pdf_path)
-
                 if not success and pypandoc and PDF_METHOD != "pypandoc":
                     success = create_pdf_pypandoc(docx_path, pdf_path)
 
         if success and pdf_path.exists():
             file_size = pdf_path.stat().st_size
             if file_size > 1000:
-                print(f"\n{'='*60}")
-                print(f"✅ PDF CREATED SUCCESSFULLY")
-                print(f"{'='*60}")
-                print(f"📁 File: {pdf_path.name}")
-                print(f"📊 Size: {file_size:,} bytes")
-                print(f"{'='*60}\n")
+                print(f"\n✅ PDF CREATED SUCCESSFULLY: {pdf_path.name} ({file_size} bytes)\n")
                 return f"{filename}.pdf"
             else:
                 print(f"\n❌ PDF too small ({file_size} bytes) - likely corrupt")
                 return None
         else:
-            print(f"\n{'='*60}")
-            print(f"❌ PDF CONVERSION FAILED")
-            print(f"{'='*60}")
-            if pdf_path.exists():
-                print(f"File exists but size: {pdf_path.stat().st_size} bytes")
-            else:
-                print(f"File not created at: {pdf_path}")
-            print(f"{'='*60}\n")
+            print(f"\n❌ PDF CONVERSION FAILED")
             return None
 
     except Exception as e:
-        print(f"\n{'='*60}")
-        print(f"❌ PDF CONVERSION ERROR")
-        print(f"{'='*60}")
-        print(f"Error: {e}")
+        print(f"\n❌ PDF CONVERSION ERROR: {e}")
         import traceback
         traceback.print_exc()
-        print(f"{'='*60}\n")
         return None
 
 @app.route("/")
@@ -1161,7 +1094,7 @@ def index():
     return render_template("index.html")
 
 # =========================
-# ✅ HISTORY API (NEW)
+# ✅ HISTORY API
 # =========================
 @app.route("/api/history", methods=["GET"])
 def api_history_list():
@@ -1200,7 +1133,7 @@ def api_history_delete(history_id):
 def chat():
     try:
         data = request.get_json()
-        text = data.get("message", "").strip()
+        text = (data.get("message", "") or "").strip()
 
         if not text:
             return jsonify({"error": "Pesan kosong"}), 400
@@ -1226,7 +1159,7 @@ def chat():
             conversations[sid] = state
             return jsonify({"text": f"Baik, saya bantu buatkan quotation.<br><br>✅ Nomor Surat: <b>{nomor_depan}</b><br><br>❓ <b>1. Nama Perusahaan?</b>"})
 
-        # Step 1: Nama Perusahaan (alamat otomatis: Serper -> AI -> Di Tempat)
+        # Step 1: Nama Perusahaan (alamat auto: Serper -> AI -> Di Tempat)
         if state['step'] == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
 
@@ -1331,11 +1264,8 @@ def chat():
             if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
                 state['data']['termin_hari'] = '14'
             else:
-                termin_converted = convert_voice_to_number(text)
-                if termin_converted.isdigit() and int(termin_converted) > 0:
-                    state['data']['termin_hari'] = termin_converted
-                else:
-                    state['data']['termin_hari'] = '14'
+                # ✅ FIX: input "14 200" -> 14
+                state['data']['termin_hari'] = parse_termin_days(text, default=14, min_days=1, max_days=365)
 
             fname = f"Quotation_{re.sub(r'[^A-Za-z0-9]+', '_', state['data']['nama_perusahaan'])}_{uuid.uuid4().hex[:6]}"
 
@@ -1360,9 +1290,6 @@ def chat():
             if pdf:
                 files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
 
-            # =========================
-            # ✅ SAVE TO DATABASE (NEW)
-            # =========================
             nama_pt = state['data'].get('nama_perusahaan', '').strip()
             history_title = f"Penawaran {nama_pt}" if nama_pt else "Penawaran"
             history_task_type = "penawaran"
@@ -1381,7 +1308,6 @@ def chat():
                 "history_id": history_id
             })
 
-        # Fallback to AI
         return jsonify({"text": call_ai(text)})
 
     except Exception as e:
@@ -1414,10 +1340,6 @@ if __name__ == "__main__":
             print(f"   ⚠️  Optimized for Linux/Render.com")
         elif PDF_METHOD == "pypandoc":
             print(f"   Library: pypandoc")
-    else:
-        print(f"   ⚠️  For Render.com deployment:")
-        print(f"   Add to render.yaml:")
-        print(f"   buildCommand: apt-get update && apt-get install -y libreoffice && pip install -r requirements.txt")
     print(f"🗄️  Database: {len(LIMBAH_B3_DB)} jenis limbah B3")
     print(f"🔢 Current Counter: {load_counter()}")
     print(f"🌐 Port: {port}")
