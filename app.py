@@ -11,6 +11,7 @@ import shutil
 import zipfile
 import subprocess
 import platform
+import sqlite3
 
 # ========== PDF GENERATION - MULTIPLE METHODS ==========
 PDF_AVAILABLE = False
@@ -39,7 +40,7 @@ def check_libreoffice():
     try:
         system = platform.system()
         print(f"🔍 Checking LibreOffice on {system}...")
-        
+
         if system == "Windows":
             paths = [
                 r"C:\Program Files\LibreOffice\program\soffice.exe",
@@ -52,28 +53,28 @@ def check_libreoffice():
         else:
             # Linux/macOS - try multiple commands
             commands = ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice']
-            
+
             for cmd in commands:
                 try:
                     # Try direct path first
                     if os.path.exists(cmd) and os.access(cmd, os.X_OK):
                         print(f"✅ Found LibreOffice at: {cmd}")
                         return cmd
-                    
+
                     # Try using 'which' command
                     result = subprocess.run(
-                        ['which', cmd], 
-                        capture_output=True, 
-                        text=True, 
+                        ['which', cmd],
+                        capture_output=True,
+                        text=True,
                         timeout=5
                     )
                     if result.returncode == 0 and result.stdout.strip():
                         path = result.stdout.strip()
                         print(f"✅ Found LibreOffice at: {path}")
                         return path
-                except Exception as e:
+                except Exception:
                     continue
-            
+
             # Try to find via command -v (alternative to which)
             for cmd in ['libreoffice', 'soffice']:
                 try:
@@ -90,11 +91,11 @@ def check_libreoffice():
                         return path
                 except:
                     continue
-                    
+
         print("❌ LibreOffice not found")
     except Exception as e:
         print(f"❌ Error checking LibreOffice: {e}")
-    
+
     return None
 
 LIBREOFFICE_PATH = check_libreoffice()
@@ -115,6 +116,10 @@ FILES_DIR = BASE_DIR / "static" / "files"
 TEMPLATE_FILE = BASE_DIR / "template_quotation.docx"
 TEMP_DIR = BASE_DIR / "temp"
 COUNTER_FILE = BASE_DIR / "counter.json"
+
+# ✅ DB PATH (SQLite)
+DB_FILE = BASE_DIR / "chat_history.db"
+
 FILES_DIR.mkdir(parents=True, exist_ok=True)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -123,6 +128,93 @@ app.secret_key = "karya-limbah-2025"
 
 conversations = {}
 
+# =========================
+# ✅ SIMPLE CORS (React Native fetch)
+# =========================
+@app.after_request
+def add_cors_headers(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    return resp
+
+# =========================
+# ✅ DATABASE (SQLite) INIT + HELPERS
+# =========================
+def db_connect():
+    conn = sqlite3.connect(str(DB_FILE))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            task_type TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            data_json TEXT NOT NULL,
+            files_json TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def db_insert_history(title: str, task_type: str, data: dict, files: list):
+    conn = db_connect()
+    cur = conn.cursor()
+    created_at = datetime.now().isoformat()
+    cur.execute("""
+        INSERT INTO chat_history (title, task_type, created_at, data_json, files_json)
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        title,
+        task_type,
+        created_at,
+        json.dumps(data, ensure_ascii=False),
+        json.dumps(files, ensure_ascii=False),
+    ))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+def db_list_histories(limit=200):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, title, task_type, created_at
+        FROM chat_history
+        ORDER BY id DESC
+        LIMIT ?
+    """, (limit,))
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def db_update_title(history_id: int, new_title: str):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("UPDATE chat_history SET title = ? WHERE id = ?", (new_title, history_id))
+    conn.commit()
+    changes = cur.rowcount
+    conn.close()
+    return changes > 0
+
+def db_delete_history(history_id: int):
+    conn = db_connect()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM chat_history WHERE id = ?", (history_id,))
+    conn.commit()
+    changes = cur.rowcount
+    conn.close()
+    return changes > 0
+
+# init db at startup
+init_db()
+
 # ===== COUNTER MANAGEMENT =====
 def load_counter():
     """Load counter dari file"""
@@ -130,24 +222,44 @@ def load_counter():
         try:
             with open(COUNTER_FILE, 'r') as f:
                 data = json.load(f)
-                return data.get('counter', 1)
+                # ✅ CHANGED: default ke 0 (biar format bisa 000)
+                return int(data.get('counter', 0))
         except:
-            return 1
-    return 1
+            return 0
+    return 0
 
 def save_counter(counter):
     """Save counter ke file"""
     with open(COUNTER_FILE, 'w') as f:
-        json.dump({'counter': counter}, f)
+        json.dump({'counter': int(counter)}, f)
 
 def get_next_nomor():
-    """Generate nomor depan otomatis"""
+    """Generate nomor depan otomatis (000..021 lalu reset ke 000)"""
+    # ✅ CHANGED: cycle 000-021 lalu reset
     counter = load_counter()
-    nomor = str(counter).zfill(3)  # Format 001, 002, 003, dst
-    save_counter(counter + 1)
+
+    # kalau file counter rusak/negatif, amankan
+    try:
+        counter = int(counter)
+    except:
+        counter = 0
+    if counter < 0:
+        counter = 0
+
+    # range 0..21
+    if counter > 21:
+        counter = 0
+
+    nomor = str(counter).zfill(3)  # 000, 001, ... 021
+
+    # next counter: setelah 21 -> balik 0
+    next_counter = (counter + 1) % 22
+    save_counter(next_counter)
+
     return nomor
 
 # ===== DATABASE LIMBAH B3 DARI PDF =====
+# (✅ TIDAK DIUBAH: biarkan persis seperti punya Anda)
 LIMBAH_B3_DB = {
     "A102d": {"jenis": "Aki/baterai bekas", "satuan": "Kg", "karakteristik": "Beracun / Korosif"},
     "A103d": {"jenis": "Debu dan fiber asbes (crocidolite, amosite, janthrophyllite)", "satuan": "Kg", "karakteristik": "Beracun"},
@@ -433,8 +545,7 @@ def call_ai(text, system_prompt=None):
 
 # =========================
 # ✅ SEARCH ALAMAT VIA SERPER (TANPA GMAPS)
-# Tidak ada "Di tempat" sama sekali.
-# Kalau gagal: return "" (kosong)
+# Kalau gagal: otomatis "Di Tempat"
 # =========================
 def _clean_address(addr: str) -> str:
     if not addr:
@@ -452,12 +563,12 @@ def _extract_address_from_text(text: str) -> str:
     t = text.replace('\n', ' ')
     t = re.sub(r'\s+', ' ', t)
 
-    # pola yang sering muncul di alamat Indonesia
     patterns = [
-        r'(Jl\.?\s[^.,]{5,120}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,120}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,80})',
-        r'(Rukan[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
-        r'(Komplek[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
-        r'(Kawasan[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
+        r'(Jl\.?\s[^.,]{5,160}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,160}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,120})',
+        r'(Jalan\s[^.,]{5,160}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,160}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,120})',
+        r'(Rukan[^.,]{5,200}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,120})',
+        r'(Komplek[^.,]{5,200}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,120})',
+        r'(Kawasan[^.,]{5,200}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,120})',
     ]
     for p in patterns:
         m = re.search(p, t, re.IGNORECASE)
@@ -470,7 +581,7 @@ def search_company_address(company_name: str) -> str:
     Cari alamat perusahaan dengan Serper (Google Search API).
     Return:
       - alamat string jika ketemu
-      - "" jika tidak ketemu (tanpa "Di tempat")
+      - "" jika tidak ketemu
     """
     name = (company_name or "").strip()
     if len(name) < 3:
@@ -486,61 +597,93 @@ def search_company_address(company_name: str) -> str:
             "X-API-KEY": SERPER_API_KEY,
             "Content-Type": "application/json"
         }
-        # query dibuat spesifik ke alamat
-        payload = {
-            "q": f"{name} alamat",
-            "gl": "id",
-            "hl": "id",
-            "num": 5
-        }
-        r = requests.post(url, headers=headers, json=payload, timeout=30)
-        r.raise_for_status()
-        data = r.json()
 
-        # 1) Coba ambil dari knowledgeGraph kalau ada
-        kg = data.get("knowledgeGraph") or {}
-        # beberapa format yang mungkin
-        for key in ["address", "formattedAddress"]:
-            if isinstance(kg.get(key), str):
-                addr = _clean_address(kg.get(key))
+        # ✅ CHANGED: query dibuat lebih agresif (2x percobaan)
+        queries = [
+            f'{name} alamat',
+            f'"{name}" alamat kantor',
+        ]
+
+        for q in queries:
+            payload = {
+                "q": q,
+                "gl": "id",
+                "hl": "id",
+                "num": 7
+            }
+            r = requests.post(url, headers=headers, json=payload, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+
+            # 1) knowledgeGraph
+            kg = data.get("knowledgeGraph") or {}
+            for key in ["address", "formattedAddress"]:
+                if isinstance(kg.get(key), str):
+                    addr = _clean_address(kg.get(key))
+                    if len(addr) >= 10:
+                        return addr
+
+            addr_obj = kg.get("address")
+            if isinstance(addr_obj, dict):
+                parts = []
+                for k in ["streetAddress", "addressLocality", "addressRegion", "postalCode", "addressCountry"]:
+                    v = addr_obj.get(k)
+                    if isinstance(v, str) and v.strip():
+                        parts.append(v.strip())
+                addr = _clean_address(", ".join(parts))
                 if len(addr) >= 10:
                     return addr
 
-        # kadang address berupa dict
-        addr_obj = kg.get("address")
-        if isinstance(addr_obj, dict):
-            parts = []
-            for k in ["streetAddress", "addressLocality", "addressRegion", "postalCode", "addressCountry"]:
-                v = addr_obj.get(k)
-                if isinstance(v, str) and v.strip():
-                    parts.append(v.strip())
-            addr = _clean_address(", ".join(parts))
-            if len(addr) >= 10:
-                return addr
+            # 2) places/local
+            places = data.get("places") or data.get("local") or []
+            if isinstance(places, list) and places:
+                p0 = places[0] or {}
+                if isinstance(p0, dict):
+                    addr = _clean_address(p0.get("address") or p0.get("formattedAddress") or "")
+                    if len(addr) >= 10:
+                        return addr
 
-        # 2) Coba local pack / places (kalau Serper mengembalikan)
-        places = data.get("places") or data.get("local") or []
-        if isinstance(places, list) and places:
-            p0 = places[0] or {}
-            if isinstance(p0, dict):
-                addr = _clean_address(p0.get("address") or p0.get("formattedAddress") or "")
+            # 3) organic snippet/title
+            organic = data.get("organic") or []
+            for item in organic:
+                if not isinstance(item, dict):
+                    continue
+                snippet = item.get("snippet") or ""
+                title = item.get("title") or ""
+                addr = _extract_address_from_text(snippet) or _extract_address_from_text(title)
                 if len(addr) >= 10:
                     return addr
-
-        # 3) Coba dari organic results snippet/title
-        organic = data.get("organic") or []
-        for item in organic:
-            if not isinstance(item, dict):
-                continue
-            snippet = item.get("snippet") or ""
-            title = item.get("title") or ""
-            addr = _extract_address_from_text(snippet) or _extract_address_from_text(title)
-            if len(addr) >= 10:
-                return addr
 
         return ""
     except Exception as e:
         print(f"Error searching address (Serper): {e}")
+        return ""
+
+# ✅ CHANGED: fallback alamat via OpenRouter (opsional)
+def search_company_address_ai(company_name: str) -> str:
+    """
+    Fallback kalau Serper gagal: minta AI menuliskan alamat jika tahu.
+    Kalau tidak yakin, return "".
+    """
+    try:
+        name = (company_name or "").strip()
+        if len(name) < 3 or not OPENROUTER_API_KEY:
+            return ""
+
+        system_prompt = (
+            "Anda adalah asisten yang mengekstrak alamat perusahaan di Indonesia.\n"
+            "Tugas: berikan alamat lengkap (satu baris) untuk nama perusahaan yang diberikan jika Anda yakin.\n"
+            "Jika tidak tahu / tidak yakin, balas dengan string kosong saja.\n"
+            "Jangan menambahkan kata lain selain alamat."
+        )
+        out = call_ai(name, system_prompt=system_prompt).strip()
+        out = _clean_address(out)
+        # minimal panjang biar tidak asal
+        if len(out) >= 10 and ("Jl" in out or "Jalan" in out or "RT" in out or "RW" in out):
+            return out
+        return ""
+    except Exception as e:
+        print(f"AI address fallback error: {e}")
         return ""
 
 def format_rupiah(angka_str):
@@ -591,7 +734,7 @@ def create_docx(data, filename):
         with open(doc_xml_path, 'r', encoding='utf-8') as f:
             doc_content = f.read()
 
-        doc_content = doc_content.replace('>027</w:t>', f'>{data.get("nomor_depan", "002")}</w:t>', 1)
+        doc_content = doc_content.replace('>027</w:t>', f'>{data.get("nomor_depan", "000")}</w:t>', 1)
         doc_content = doc_content.replace('>IX</w:t>', f'>{bulan_romawi}</w:t>', 1)
         doc_content = doc_content.replace('>PT Surgika Alkesindo, </w:t>', f'>{escape_xml(nama_perusahaan)}, </w:t>')
         doc_content = doc_content.replace('>PT. Surgika Alkesindo</w:t>', f'>{escape_xml(nama_perusahaan)}</w:t>')
@@ -602,7 +745,18 @@ def create_docx(data, filename):
 
         termin_hari = data.get('termin_hari', '14')
         termin_terbilang = angka_ke_terbilang(termin_hari)
+
+        # ✅ CHANGED: termin dibuat lebih robust (kalau run terpecah / beda spasi)
+        # 1) cara lama (tetap)
         doc_content = doc_content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
+        # 2) regex variasi spasi
+        doc_content = re.sub(
+            r'>\s*14\s*\(\s*empat\s+belas\s*\)\s*Hari',
+            f'>{termin_hari} ({termin_terbilang}) Hari',
+            doc_content,
+            count=1,
+            flags=re.IGNORECASE
+        )
 
         table_start_pattern = r'<w:tbl>(.*?Jenis Limbah.*?)</w:tbl>'
         table_match = re.search(table_start_pattern, doc_content, re.DOTALL)
@@ -734,12 +888,14 @@ def create_docx(data, filename):
         word_dir = temp_extract / "word"
 
         header_replacements = {
-            '>027</w:t>': f'>{data.get("nomor_depan", "002")}</w:t>',
+            '>027</w:t>': f'>{data.get("nomor_depan", "000")}</w:t>',
             '>IX</w:t>': f'>{bulan_romawi}</w:t>',
             '>PT Surgika Alkesindo, </w:t>': f'>{escape_xml(nama_perusahaan)}, </w:t>',
             '>PT. Surgika Alkesindo</w:t>': f'>{escape_xml(nama_perusahaan)}</w:t>',
             f'>{old_alamat}</w:t>': f'>{escape_xml(alamat_perusahaan)}</w:t>',
             '>28 November </w:t>': f'>{now.day} {bulan_id[now.strftime("%m")]} </w:t>',
+            # ✅ CHANGED: termin juga dipaksa ganti di header/footer kalau ada
+            '>14 (empat belas) Hari': f'>{termin_hari} ({termin_terbilang}) Hari',
         }
 
         for xml_file in word_dir.glob("*.xml"):
@@ -749,6 +905,15 @@ def create_docx(data, filename):
 
                 for old_text, new_text in header_replacements.items():
                     content = content.replace(old_text, new_text)
+
+                # ✅ CHANGED: regex termin di header/footer juga
+                content = re.sub(
+                    r'>\s*14\s*\(\s*empat\s+belas\s*\)\s*Hari',
+                    f'>{termin_hari} ({termin_terbilang}) Hari',
+                    content,
+                    count=1,
+                    flags=re.IGNORECASE
+                )
 
                 with open(xml_file, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -777,16 +942,13 @@ def create_pdf_libreoffice(docx_path, pdf_path):
     try:
         print(f"  → Converting with LibreOffice...")
         print(f"     Path: {LIBREOFFICE_PATH}")
-        
-        # Remove existing PDF to avoid conflicts
+
         if pdf_path.exists():
             pdf_path.unlink()
             print(f"     Removed existing PDF")
-        
-        # Ensure output directory exists
+
         FILES_DIR.mkdir(parents=True, exist_ok=True)
-        
-        # LibreOffice command with optimized flags for headless conversion
+
         cmd = [
             str(LIBREOFFICE_PATH),
             '--headless',
@@ -801,30 +963,28 @@ def create_pdf_libreoffice(docx_path, pdf_path):
             '--outdir', str(FILES_DIR),
             str(docx_path)
         ]
-        
+
         print(f"     Running command: {' '.join(cmd)}")
-        
-        # Run conversion with timeout
+
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=90,  # Increased timeout for server environment
+            timeout=90,
             check=False,
-            env={**os.environ, 'HOME': str(TEMP_DIR)}  # Set HOME for LibreOffice
+            env={**os.environ, 'HOME': str(TEMP_DIR)}
         )
-        
+
         print(f"     Return code: {result.returncode}")
         if result.stdout:
             print(f"     STDOUT: {result.stdout}")
         if result.stderr:
             print(f"     STDERR: {result.stderr}")
-        
-        # Verify PDF was created
+
         if pdf_path.exists():
             file_size = pdf_path.stat().st_size
             print(f"     ✓ PDF created: {file_size} bytes")
-            if file_size > 1000:  # Minimum valid PDF size
+            if file_size > 1000:
                 return True
             else:
                 print(f"     ✗ PDF too small ({file_size} bytes) - likely corrupt")
@@ -832,7 +992,7 @@ def create_pdf_libreoffice(docx_path, pdf_path):
         else:
             print(f"     ✗ PDF file not created at: {pdf_path}")
             return False
-            
+
     except subprocess.TimeoutExpired:
         print(f"  ✗ LibreOffice conversion timeout (>90s)")
         return False
@@ -847,7 +1007,7 @@ def create_pdf_docx2pdf(docx_path, pdf_path):
     try:
         print(f"  → Trying docx2pdf...")
         docx_to_pdf(str(docx_path), str(pdf_path))
-        
+
         if pdf_path.exists() and pdf_path.stat().st_size > 1000:
             print(f"  ✓ docx2pdf succeeded")
             return True
@@ -868,7 +1028,7 @@ def create_pdf_pypandoc(docx_path, pdf_path):
             outputfile=str(pdf_path),
             extra_args=['--pdf-engine=xelatex']
         )
-        
+
         if pdf_path.exists() and pdf_path.stat().st_size > 1000:
             print(f"  ✓ pypandoc succeeded")
             return True
@@ -894,7 +1054,6 @@ def create_pdf(filename):
     docx_path = FILES_DIR / f"{filename}.docx"
     pdf_path = FILES_DIR / f"{filename}.pdf"
 
-    # Check if DOCX exists
     if not docx_path.exists():
         print(f"❌ DOCX not found: {docx_path}")
         return None
@@ -909,48 +1068,39 @@ def create_pdf(filename):
 
     try:
         success = False
-        
-        # For Linux (Render.com), prioritize LibreOffice
+
         if platform.system() == "Linux":
             if LIBREOFFICE_PATH:
                 success = create_pdf_libreoffice(docx_path, pdf_path)
-            
-            # Fallback to pypandoc on Linux
+
             if not success and pypandoc and PDF_METHOD != "libreoffice":
                 success = create_pdf_pypandoc(docx_path, pdf_path)
-        
-        # For Windows/macOS
+
         else:
-            # Try primary method first
             if PDF_METHOD == "docx2pdf" and docx_to_pdf:
                 success = create_pdf_docx2pdf(docx_path, pdf_path)
-            
+
             elif PDF_METHOD == "libreoffice" and LIBREOFFICE_PATH:
                 success = create_pdf_libreoffice(docx_path, pdf_path)
-            
+
             elif PDF_METHOD == "pypandoc" and pypandoc:
                 success = create_pdf_pypandoc(docx_path, pdf_path)
-            
-            # Try fallback methods if primary failed
+
             if not success:
                 print(f"\n⚠️  Primary method failed, trying fallbacks...")
-                
-                # Try docx2pdf as fallback
+
                 if not success and docx_to_pdf and PDF_METHOD != "docx2pdf":
                     success = create_pdf_docx2pdf(docx_path, pdf_path)
-                
-                # Try LibreOffice as fallback
+
                 if not success and LIBREOFFICE_PATH and PDF_METHOD != "libreoffice":
                     success = create_pdf_libreoffice(docx_path, pdf_path)
-                
-                # Try pypandoc as fallback
+
                 if not success and pypandoc and PDF_METHOD != "pypandoc":
                     success = create_pdf_pypandoc(docx_path, pdf_path)
-        
-        # Verify final result
+
         if success and pdf_path.exists():
             file_size = pdf_path.stat().st_size
-            if file_size > 1000:  # Minimum valid PDF
+            if file_size > 1000:
                 print(f"\n{'='*60}")
                 print(f"✅ PDF CREATED SUCCESSFULLY")
                 print(f"{'='*60}")
@@ -971,7 +1121,7 @@ def create_pdf(filename):
                 print(f"File not created at: {pdf_path}")
             print(f"{'='*60}\n")
             return None
-            
+
     except Exception as e:
         print(f"\n{'='*60}")
         print(f"❌ PDF CONVERSION ERROR")
@@ -985,6 +1135,42 @@ def create_pdf(filename):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+# =========================
+# ✅ HISTORY API (NEW)
+# =========================
+@app.route("/api/history", methods=["GET"])
+def api_history_list():
+    try:
+        items = db_list_histories(limit=200)
+        return jsonify({"items": items})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/history/<int:history_id>", methods=["PUT"])
+def api_history_update(history_id):
+    try:
+        body = request.get_json() or {}
+        new_title = (body.get("title") or "").strip()
+        if not new_title:
+            return jsonify({"error": "title wajib diisi"}), 400
+
+        ok = db_update_title(history_id, new_title)
+        if not ok:
+            return jsonify({"error": "history tidak ditemukan"}), 404
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/history/<int:history_id>", methods=["DELETE"])
+def api_history_delete(history_id):
+    try:
+        ok = db_delete_history(history_id)
+        if not ok:
+            return jsonify({"error": "history tidak ditemukan"}), 404
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
@@ -1020,17 +1206,13 @@ def chat():
         if state['step'] == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
 
-            alamat = search_company_address(text)
-            alamat = alamat.strip()
-
-            # Jika alamat belum ketemu, minta user isi manual (tanpa "Di tempat")
+            # ✅ CHANGED: alamat = Serper, kalau kosong -> coba AI, kalau tetap kosong -> "Di Tempat"
+            alamat = search_company_address(text).strip()
             if not alamat:
-                state['step'] = 'alamat_manual'
-                state['data']['alamat_perusahaan'] = ""
-                conversations[sid] = state
-                return jsonify({
-                    "text": f"✅ Nama: <b>{text}</b><br>🔎 Alamat: <b>(belum ditemukan otomatis)</b><br><br>❓ <b>Masukkan alamat lengkap perusahaan?</b>"
-                })
+                alamat = search_company_address_ai(text).strip()
+
+            if not alamat:
+                alamat = "Di Tempat"  # ✅ CHANGED: otomatis "Di Tempat", tidak tanya manual
 
             state['data']['alamat_perusahaan'] = alamat
             state['step'] = 'jenis_kode_limbah'
@@ -1039,16 +1221,6 @@ def chat():
 
             return jsonify({
                 "text": f"✅ Nama: <b>{text}</b><br>✅ Alamat: <b>{alamat}</b><br><br>📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
-            })
-
-        # Step 1b: Alamat manual
-        if state['step'] == 'alamat_manual':
-            state['data']['alamat_perusahaan'] = text
-            state['step'] = 'jenis_kode_limbah'
-            state['data']['current_item'] = {}
-            conversations[sid] = state
-            return jsonify({
-                "text": f"✅ Alamat tersimpan: <b>{text}</b><br><br>📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
             })
 
         # Step 2: Jenis/Kode Limbah
@@ -1144,22 +1316,20 @@ def chat():
                     state['data']['termin_hari'] = '14'
 
             fname = f"Quotation_{re.sub(r'[^A-Za-z0-9]+', '_', state['data']['nama_perusahaan'])}_{uuid.uuid4().hex[:6]}"
-            
-            # Create DOCX
+
             print(f"\n{'='*60}")
             print(f"📝 Creating documents for: {state['data']['nama_perusahaan']}")
             print(f"{'='*60}")
-            
+
             docx = create_docx(state['data'], fname)
             print(f"✅ DOCX created: {docx}")
-            
-            # Create PDF with detailed logging
+
             pdf = create_pdf(fname)
             if pdf:
                 print(f"✅ PDF created: {pdf}")
             else:
                 print(f"⚠️  PDF not created - continuing without PDF")
-            
+
             print(f"{'='*60}\n")
 
             conversations[sid] = {'step': 'idle', 'data': {}}
@@ -1168,10 +1338,25 @@ def chat():
             if pdf:
                 files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
 
+            # =========================
+            # ✅ SAVE TO DATABASE (NEW)
+            # =========================
+            nama_pt = state['data'].get('nama_perusahaan', '').strip()
+            history_title = f"Penawaran {nama_pt}" if nama_pt else "Penawaran"
+            history_task_type = "penawaran"
+
+            history_id = db_insert_history(
+                title=history_title,
+                task_type=history_task_type,
+                data=state['data'],
+                files=files
+            )
+
             termin_terbilang = angka_ke_terbilang(state['data']['termin_hari'])
             return jsonify({
                 "text": f"✅ Termin: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>🎉 <b>Quotation berhasil dibuat!</b>",
-                "files": files
+                "files": files,
+                "history_id": history_id
             })
 
         # Fallback to AI
