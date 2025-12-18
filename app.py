@@ -222,7 +222,7 @@ def load_counter():
         try:
             with open(COUNTER_FILE, 'r') as f:
                 data = json.load(f)
-                # ✅ CHANGED: default ke 0 (biar format bisa 000)
+                # ✅ FIX: default 0 supaya format bisa 000
                 return int(data.get('counter', 0))
         except:
             return 0
@@ -235,31 +235,23 @@ def save_counter(counter):
 
 def get_next_nomor():
     """Generate nomor depan otomatis (000..021 lalu reset ke 000)"""
-    # ✅ CHANGED: cycle 000-021 lalu reset
     counter = load_counter()
-
-    # kalau file counter rusak/negatif, amankan
     try:
         counter = int(counter)
     except:
         counter = 0
+
     if counter < 0:
         counter = 0
-
-    # range 0..21
     if counter > 21:
         counter = 0
 
     nomor = str(counter).zfill(3)  # 000, 001, ... 021
-
-    # next counter: setelah 21 -> balik 0
     next_counter = (counter + 1) % 22
     save_counter(next_counter)
-
     return nomor
 
 # ===== DATABASE LIMBAH B3 DARI PDF =====
-# (✅ TIDAK DIUBAH: biarkan persis seperti punya Anda)
 LIMBAH_B3_DB = {
     "A102d": {"jenis": "Aki/baterai bekas", "satuan": "Kg", "karakteristik": "Beracun / Korosif"},
     "A103d": {"jenis": "Debu dan fiber asbes (crocidolite, amosite, janthrophyllite)", "satuan": "Kg", "karakteristik": "Beracun"},
@@ -327,7 +319,7 @@ LIMBAH_B3_DB = {
     "A338-3": {"jenis": "Residu sampel Limbah B3", "satuan": "Kg", "karakteristik": "Beracun"},
     "A338-4": {"jenis": "Sludge IPAL laboratorium", "satuan": "Kg", "karakteristik": "Beracun"},
     "A339-1": {"jenis": "Larutan developer, fixer, bleach bekas (Fotografi)", "satuan": "Kg", "karakteristik": "Beracun"},
-    "A341-1": {"jenis": "Residu produksi dan konsentrat (Sabun deterjen, kosmetik)", "satuan": "Kg", "karakteristik": "Beracun"},
+    "A341-1": {"jenis": "Residu proses produksi dan konsentrat (Sabun deterjen, kosmetik)", "satuan": "Kg", "karakteristik": "Beracun"},
     "A341-2": {"jenis": "Konsentrat tidak memenuhi spesifikasi teknis", "satuan": "Kg", "karakteristik": "Beracun"},
     "A341-3": {"jenis": "Heavy alkylated hydrocarbon", "satuan": "Kg", "karakteristik": "Beracun"},
     "A342-1": {"jenis": "Residu filtrasi (Pengolahan minyak hewani/nabati)", "satuan": "Kg", "karakteristik": "Beracun"},
@@ -545,7 +537,7 @@ def call_ai(text, system_prompt=None):
 
 # =========================
 # ✅ SEARCH ALAMAT VIA SERPER (TANPA GMAPS)
-# Kalau gagal: otomatis "Di Tempat"
+# Kalau gagal: return "" (kosong)
 # =========================
 def _clean_address(addr: str) -> str:
     if not addr:
@@ -564,11 +556,10 @@ def _extract_address_from_text(text: str) -> str:
     t = re.sub(r'\s+', ' ', t)
 
     patterns = [
-        r'(Jl\.?\s[^.,]{5,160}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,160}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,120})',
-        r'(Jalan\s[^.,]{5,160}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,160}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,120})',
-        r'(Rukan[^.,]{5,200}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,120})',
-        r'(Komplek[^.,]{5,200}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,120})',
-        r'(Kawasan[^.,]{5,200}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,120})',
+        r'(Jl\.?\s[^.,]{5,120}(?:No\.?\s?\d+[A-Za-z\/\-]?)?[^.]{0,120}(?:Jakarta|Bandung|Surabaya|Bekasi|Tangerang|Depok|Bogor|Medan|Semarang|Denpasar|Makassar)[^.,]{0,80})',
+        r'(Rukan[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
+        r'(Komplek[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
+        r'(Kawasan[^.,]{5,160}(?:Jakarta|Bekasi|Tangerang)[^.,]{0,80})',
     ]
     for p in patterns:
         m = re.search(p, t, re.IGNORECASE)
@@ -598,10 +589,10 @@ def search_company_address(company_name: str) -> str:
             "Content-Type": "application/json"
         }
 
-        # ✅ CHANGED: query dibuat lebih agresif (2x percobaan)
+        # ✅ sedikit lebih agresif
         queries = [
-            f'{name} alamat',
-            f'"{name}" alamat kantor',
+            f"{name} alamat",
+            f"\"{name}\" alamat kantor"
         ]
 
         for q in queries:
@@ -659,11 +650,11 @@ def search_company_address(company_name: str) -> str:
         print(f"Error searching address (Serper): {e}")
         return ""
 
-# ✅ CHANGED: fallback alamat via OpenRouter (opsional)
+# ✅ fallback alamat via OpenRouter
 def search_company_address_ai(company_name: str) -> str:
     """
-    Fallback kalau Serper gagal: minta AI menuliskan alamat jika tahu.
-    Kalau tidak yakin, return "".
+    Fallback kalau Serper gagal: minta AI menuliskan alamat jika yakin.
+    Jika tidak tahu / ragu, return "".
     """
     try:
         name = (company_name or "").strip()
@@ -678,8 +669,7 @@ def search_company_address_ai(company_name: str) -> str:
         )
         out = call_ai(name, system_prompt=system_prompt).strip()
         out = _clean_address(out)
-        # minimal panjang biar tidak asal
-        if len(out) >= 10 and ("Jl" in out or "Jalan" in out or "RT" in out or "RW" in out):
+        if len(out) >= 10:
             return out
         return ""
     except Exception as e:
@@ -707,6 +697,48 @@ def escape_xml(text):
     text = text.replace('"', '&quot;')
     text = text.replace("'", '&apos;')
     return text
+
+# =========================
+# ✅ FIX TERMIN SPLIT-RUN (NEW)
+# =========================
+def replace_wt_text_in_context(xml: str, context_phrase: str, old_text: str, new_text: str, window: int = 2000, max_repl: int = 10) -> str:
+    """
+    Replace text di dalam <w:t>OLD</w:t> menjadi <w:t>NEW</w:t>
+    hanya jika di sekitar match ada context_phrase.
+    Cocok untuk template yang memecah kalimat menjadi beberapa <w:t>.
+    """
+    if not xml or not context_phrase or old_text is None:
+        return xml
+
+    ctx = context_phrase.lower()
+    xml_lower = xml.lower()
+
+    pattern = r'(<w:t[^>]*>)\s*' + re.escape(str(old_text)) + r'\s*(</w:t>)'
+    rx = re.compile(pattern, re.IGNORECASE | re.DOTALL)
+
+    out = []
+    last = 0
+    changed = 0
+
+    for m in rx.finditer(xml):
+        if changed >= max_repl:
+            break
+
+        start, end = m.start(), m.end()
+        w_start = max(0, start - window)
+        w_end = min(len(xml), end + window)
+
+        if ctx in xml_lower[w_start:w_end]:
+            out.append(xml[last:start])
+            out.append(f"{m.group(1)}{new_text}{m.group(2)}")
+            last = end
+            changed += 1
+
+    if changed > 0:
+        out.append(xml[last:])
+        return ''.join(out)
+
+    return xml
 
 def create_docx(data, filename):
     filepath = FILES_DIR / f"{filename}.docx"
@@ -743,20 +775,17 @@ def create_docx(data, filename):
         doc_content = doc_content.replace(f'>{old_alamat}</w:t>', f'>{escape_xml(alamat_perusahaan)}</w:t>')
         doc_content = doc_content.replace('>28 November </w:t>', f'>{now.day} {bulan_id[now.strftime("%m")]} </w:t>', 1)
 
+        # ✅ Termin dynamic (FIX template split-run)
         termin_hari = data.get('termin_hari', '14')
         termin_terbilang = angka_ke_terbilang(termin_hari)
 
-        # ✅ CHANGED: termin dibuat lebih robust (kalau run terpecah / beda spasi)
-        # 1) cara lama (tetap)
+        # fallback kalau ada bentuk utuh (jarang)
         doc_content = doc_content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
-        # 2) regex variasi spasi
-        doc_content = re.sub(
-            r'>\s*14\s*\(\s*empat\s+belas\s*\)\s*Hari',
-            f'>{termin_hari} ({termin_terbilang}) Hari',
-            doc_content,
-            count=1,
-            flags=re.IGNORECASE
-        )
+
+        # FIX utama: karena template terpecah menjadi beberapa <w:t>
+        ctx_phrase = "Termin Pembayaran Paling Lambat"
+        doc_content = replace_wt_text_in_context(doc_content, ctx_phrase, "14", termin_hari)
+        doc_content = replace_wt_text_in_context(doc_content, ctx_phrase, "empat belas", termin_terbilang)
 
         table_start_pattern = r'<w:tbl>(.*?Jenis Limbah.*?)</w:tbl>'
         table_match = re.search(table_start_pattern, doc_content, re.DOTALL)
@@ -894,8 +923,6 @@ def create_docx(data, filename):
             '>PT. Surgika Alkesindo</w:t>': f'>{escape_xml(nama_perusahaan)}</w:t>',
             f'>{old_alamat}</w:t>': f'>{escape_xml(alamat_perusahaan)}</w:t>',
             '>28 November </w:t>': f'>{now.day} {bulan_id[now.strftime("%m")]} </w:t>',
-            # ✅ CHANGED: termin juga dipaksa ganti di header/footer kalau ada
-            '>14 (empat belas) Hari': f'>{termin_hari} ({termin_terbilang}) Hari',
         }
 
         for xml_file in word_dir.glob("*.xml"):
@@ -906,14 +933,11 @@ def create_docx(data, filename):
                 for old_text, new_text in header_replacements.items():
                     content = content.replace(old_text, new_text)
 
-                # ✅ CHANGED: regex termin di header/footer juga
-                content = re.sub(
-                    r'>\s*14\s*\(\s*empat\s+belas\s*\)\s*Hari',
-                    f'>{termin_hari} ({termin_terbilang}) Hari',
-                    content,
-                    count=1,
-                    flags=re.IGNORECASE
-                )
+                # ✅ FIX termin split-run juga kalau ada di header/footer
+                content = content.replace('>14 (empat belas) Hari', f'>{termin_hari} ({termin_terbilang}) Hari')
+                ctx_phrase = "Termin Pembayaran Paling Lambat"
+                content = replace_wt_text_in_context(content, ctx_phrase, "14", termin_hari)
+                content = replace_wt_text_in_context(content, ctx_phrase, "empat belas", termin_terbilang)
 
                 with open(xml_file, 'w', encoding='utf-8') as f:
                     f.write(content)
@@ -1202,17 +1226,15 @@ def chat():
             conversations[sid] = state
             return jsonify({"text": f"Baik, saya bantu buatkan quotation.<br><br>✅ Nomor Surat: <b>{nomor_depan}</b><br><br>❓ <b>1. Nama Perusahaan?</b>"})
 
-        # Step 1: Nama Perusahaan (search alamat dulu via Serper)
+        # Step 1: Nama Perusahaan (alamat otomatis: Serper -> AI -> Di Tempat)
         if state['step'] == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
 
-            # ✅ CHANGED: alamat = Serper, kalau kosong -> coba AI, kalau tetap kosong -> "Di Tempat"
             alamat = search_company_address(text).strip()
             if not alamat:
                 alamat = search_company_address_ai(text).strip()
-
             if not alamat:
-                alamat = "Di Tempat"  # ✅ CHANGED: otomatis "Di Tempat", tidak tanya manual
+                alamat = "Di Tempat"
 
             state['data']['alamat_perusahaan'] = alamat
             state['step'] = 'jenis_kode_limbah'
