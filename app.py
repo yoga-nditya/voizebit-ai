@@ -42,6 +42,17 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     return resp
 
+
+# ✅ TAMBAHAN: helper untuk deteksi NON B3 (berbagai variasi penulisan)
+def is_non_b3_input(text: str) -> bool:
+    if not text:
+        return False
+    t = text.strip().lower()
+    # normalisasi: hilangkan spasi/underscore/dash
+    norm = re.sub(r'[\s\-_]+', '', t)
+    return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -150,7 +161,7 @@ def chat():
     try:
         data = request.get_json() or {}
         text = (data.get("message", "") or "").strip()
-        history_id_in = data.get("history_id")  
+        history_id_in = data.get("history_id")
 
         if not text:
             return jsonify({"error": "Pesan kosong"}), 400
@@ -229,6 +240,26 @@ def chat():
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'jenis_kode_limbah':
+            # ✅ TAMBAHAN: jika input adalah NON B3 -> masuk manual flow
+            if is_non_b3_input(text):
+                state['data']['current_item']['kode_limbah'] = "NON B3"
+                state['data']['current_item']['jenis_limbah'] = ""   # akan diisi manual
+                state['data']['current_item']['satuan'] = ""         # akan diisi manual
+                state['step'] = 'manual_jenis_limbah'
+                conversations[sid] = state
+
+                out_text = (
+                    "✅ Kode: <b>NON B3</b><br><br>"
+                    "❓ <b>2A. Jenis Limbah (manual) apa?</b><br>"
+                    "<i>(Contoh: 'plastik bekas', 'kertas bekas', dll)</i>"
+                )
+
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+
+                return jsonify({"text": out_text, "history_id": history_id_in})
+
             kode, data_limbah = find_limbah_by_kode(text)
 
             if kode and data_limbah:
@@ -265,7 +296,8 @@ def chat():
                         f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan dalam database.<br><br>"
                         "Silakan coba lagi dengan:<br>"
                         "• Kode limbah (contoh: A102d, B105d)<br>"
-                        "• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)"
+                        "• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)<br>"
+                        "• Atau ketik <b>NON B3</b> untuk input manual"
                     )
 
                     if history_id_in:
@@ -273,6 +305,40 @@ def chat():
                         db_update_state(int(history_id_in), state)
 
                     return jsonify({"text": out_text, "history_id": history_id_in})
+
+        # ✅ TAMBAHAN: Step manual untuk NON B3
+        elif state['step'] == 'manual_jenis_limbah':
+            state['data']['current_item']['jenis_limbah'] = text
+            state['step'] = 'manual_satuan'
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ Jenis (manual): <b>{text}</b><br><br>"
+                "❓ <b>2B. Satuan (manual) apa?</b><br>"
+                "<i>(Contoh: kg, liter, drum, pcs, dll)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        elif state['step'] == 'manual_satuan':
+            state['data']['current_item']['satuan'] = text
+            state['step'] = 'harga'
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ Satuan (manual): <b>{text}</b><br><br>"
+                "❓ <b>3. Harga (Rp)?</b>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga':
             harga_converted = convert_voice_to_number(text)
@@ -295,12 +361,12 @@ def chat():
         elif state['step'] == 'tambah_item':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
-                
+
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                
+
                 return jsonify({"text": out_text, "history_id": history_id_in})
-            
+
             if 'ya' in lower or 'iya' in lower:
                 num = len(state['data']['items_limbah'])
                 state['step'] = 'jenis_kode_limbah'
@@ -325,10 +391,10 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
             else:
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
-                
+
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                
+
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_transportasi':
@@ -348,12 +414,12 @@ def chat():
         elif state['step'] == 'tanya_mou':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
-                
+
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                
+
                 return jsonify({"text": out_text, "history_id": history_id_in})
-            
+
             if 'ya' in lower or 'iya' in lower:
                 state['step'] = 'harga_mou'
                 conversations[sid] = state
@@ -377,10 +443,10 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
             else:
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
-                
+
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                
+
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_mou':
