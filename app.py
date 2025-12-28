@@ -1,6 +1,3 @@
-"""
-Flask App - Routes & Chat Flow Only
-"""
 import os
 import json
 import uuid
@@ -51,6 +48,53 @@ def is_non_b3_input(text: str) -> bool:
     # normalisasi: hilangkan spasi/underscore/dash
     norm = re.sub(r'[\s\-_]+', '', t)
     return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
+
+
+# ✅ TAMBAHAN: normalisasi angka format Indonesia agar "3.000" tidak kebaca 3.0
+def normalize_id_number_text(text: str) -> str:
+    if not text:
+        return text
+    t = text.strip()
+
+    # Hapus titik sebagai pemisah ribuan: 3.000 -> 3000, 12.345.678 -> 12345678
+    # (hanya hapus titik yang diikuti tepat 3 digit)
+    t = re.sub(r'(?<=\d)\.(?=\d{3}(\D|$))', '', t)
+
+    # Ubah koma desimal jadi titik: 3,5 -> 3.5
+    t = re.sub(r'(?<=\d),(?=\d)', '.', t)
+
+    return t
+
+
+# ✅ TAMBAHAN: buat nama file unik (Quotation - Nama PT, Quotation - Nama PT (2), dst)
+def make_unique_filename_base(base_name: str) -> str:
+    base_name = (base_name or "").strip()
+    if not base_name:
+        base_name = "Quotation - Penawaran"
+
+    # FILES_DIR dari config_new (dipakai juga di route download)
+    try:
+        folder = str(FILES_DIR)
+    except Exception:
+        folder = "static/files"
+
+    def exists_any(name: str) -> bool:
+        # cek kemungkinan docx/pdf (dan kalau sistem Anda pernah pakai underscore, tetap aman)
+        return (
+            os.path.exists(os.path.join(folder, f"{name}.docx")) or
+            os.path.exists(os.path.join(folder, f"{name}.pdf")) or
+            os.path.exists(os.path.join(folder, name))  # kalau create_docx mengembalikan full name langsung
+        )
+
+    if not exists_any(base_name):
+        return base_name
+
+    i = 2
+    while True:
+        candidate = f"{base_name} ({i})"
+        if not exists_any(candidate):
+            return candidate
+        i += 1
 
 
 @app.route("/")
@@ -341,7 +385,8 @@ def chat():
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga':
-            harga_converted = convert_voice_to_number(text)
+            # ✅ REVISI: normalisasi "3.000" supaya tidak jadi 3.0
+            harga_converted = convert_voice_to_number(normalize_id_number_text(text))
             state['data']['current_item']['harga'] = harga_converted
 
             state['data']['items_limbah'].append(state['data']['current_item'])
@@ -398,7 +443,8 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_transportasi':
-            transportasi_converted = convert_voice_to_number(text)
+            # ✅ REVISI: normalisasi angka
+            transportasi_converted = convert_voice_to_number(normalize_id_number_text(text))
             state['data']['harga_transportasi'] = transportasi_converted
             state['step'] = 'tanya_mou'
             conversations[sid] = state
@@ -450,7 +496,8 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_mou':
-            mou_converted = convert_voice_to_number(text)
+            # ✅ REVISI: normalisasi angka
+            mou_converted = convert_voice_to_number(normalize_id_number_text(text))
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
             conversations[sid] = state
@@ -470,7 +517,12 @@ def chat():
             else:
                 state['data']['termin_hari'] = parse_termin_days(text, default=14, min_days=1, max_days=365)
 
-            fname = f"Quotation_{re.sub(r'[^A-Za-z0-9]+', '_', state['data']['nama_perusahaan'])}_{uuid.uuid4().hex[:6]}"
+            # ✅ REVISI: nama file jadi "Quotation - (Nama PT)" + unik (2), (3), dst
+            nama_pt_raw = state['data'].get('nama_perusahaan', '').strip()
+            safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
+            safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
+            base_fname = f"Quotation - {safe_pt}" if safe_pt else "Quotation - Penawaran"
+            fname = make_unique_filename_base(base_fname)
 
             docx = create_docx(state['data'], fname)
             pdf = create_pdf(fname)
