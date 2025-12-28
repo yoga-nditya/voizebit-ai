@@ -296,9 +296,16 @@ def replace_regex_in_paragraph(paragraph, pattern: str, repl: str):
 
 # ✅ TAMBAHAN: buat DOCX MoU dari template
 def create_mou_docx(mou_data: dict, fname_base: str) -> str:
-    template_path = os.path.join("templates", "tamplate MoU.docx")
+    # ✅ TEMPLATE ADA DI ROOT PROJECT (BUKAN templates/)
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    template_path = os.path.join(BASE_DIR, "tamplate MoU.docx")
+
     if not os.path.exists(template_path):
-        raise Exception("Template MoU tidak ditemukan. Pastikan ada di templates/tamplate MoU.docx")
+        raise Exception(
+            f"Template MoU tidak ditemukan.\n"
+            f"Pastikan file 'tamplate MoU.docx' berada di root project.\n"
+            f"Path dicari: {template_path}"
+        )
 
     doc = Document(template_path)
 
@@ -309,10 +316,9 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     nomor_full = (mou_data.get("nomor_surat") or mou_data.get("nomor_depan") or "").strip()
     tanggal_text = format_tanggal_indonesia(datetime.now())
 
+    # === contoh nama di template (akan diganti) ===
     contoh_pihak1_candidates = [
         "PT. PANPAN LUCKY INDONESIA",
-        "PT. Panpan Lucky Indonesia",
-        "PT PANPAN LUCKY INDONESIA",
         "PT Panpan Lucky Indonesia",
     ]
     contoh_pihak2_candidates = [
@@ -323,7 +329,6 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     contoh_pihak3_candidates = [
         "PT. HARAPAN BARU SEJAHTERA PLASTIK",
         "PT Harapan Baru Sejahtera Plastik",
-        "PT. HBSP",
         "PT HBSP",
     ]
 
@@ -344,66 +349,50 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     replace_everywhere(contoh_pihak2_candidates, pihak2)
     replace_everywhere(contoh_pihak3_candidates, pihak3)
 
-    # Replace nomor
+    # === Replace Nomor ===
     for p in doc.paragraphs:
         if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
             replace_regex_in_paragraph(p, r'\bNo\s*:\s*.*', f"No : {nomor_full}")
             break
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
-                        replace_regex_in_paragraph(p, r'\bNo\s*:\s*.*', f"No : {nomor_full}")
-                        break
 
-    # Replace tanggal
+    # === Replace Tanggal ===
     for p in doc.paragraphs:
-        if re.search(r'Pada hari ini', p.text, flags=re.IGNORECASE) and re.search(r'tanggal', p.text, flags=re.IGNORECASE):
-            replace_regex_in_paragraph(p, r'Pada hari ini.*', f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :")
+        if "Pada hari ini" in p.text:
+            replace_regex_in_paragraph(
+                p,
+                r'Pada hari ini.*',
+                f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :"
+            )
             break
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    if re.search(r'Pada hari ini', p.text, flags=re.IGNORECASE) and re.search(r'tanggal', p.text, flags=re.IGNORECASE):
-                        replace_regex_in_paragraph(p, r'Pada hari ini.*', f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :")
-                        break
 
-    # Isi table limbah
+    # === Isi Tabel Limbah ===
     items = mou_data.get("items_limbah") or []
     target_table = None
+
     for t in doc.tables:
-        header_text = " ".join([c.text.strip() for c in t.rows[0].cells]) if t.rows else ""
-        if ("Jenis Limbah" in header_text) and ("Kode Limbah" in header_text):
+        header = " ".join(c.text for c in t.rows[0].cells)
+        if "Jenis Limbah" in header and "Kode Limbah" in header:
             target_table = t
             break
 
-    if target_table is not None:
+    if target_table:
         while len(target_table.rows) > 1:
             target_table._tbl.remove(target_table.rows[1]._tr)
 
         for i, it in enumerate(items, start=1):
             row = target_table.add_row()
-            cells = row.cells
-            if len(cells) >= 1:
-                cells[0].text = str(i)
-            if len(cells) >= 2:
-                cells[1].text = (it.get("jenis_limbah") or "").strip()
-            if len(cells) >= 3:
-                cells[2].text = (it.get("kode_limbah") or "").strip()
+            row.cells[0].text = str(i)
+            row.cells[1].text = it.get("jenis_limbah", "")
+            row.cells[2].text = it.get("kode_limbah", "")
 
-    try:
-        folder = str(FILES_DIR)
-    except Exception:
-        folder = "static/files"
+    # === SAVE FILE ===
+    folder = str(FILES_DIR)
     os.makedirs(folder, exist_ok=True)
 
     out_path = os.path.join(folder, f"{fname_base}.docx")
     doc.save(out_path)
 
     return f"{fname_base}.docx"
-
 
 @app.route("/")
 def index():
