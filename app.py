@@ -50,20 +50,78 @@ def is_non_b3_input(text: str) -> bool:
     return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
 
 
-# ✅ TAMBAHAN: normalisasi angka format Indonesia agar "3.000" tidak kebaca 3.0
+# ✅ TAMBAHAN: normalisasi angka format Indonesia:
+# - 3.000 / 3,000 => 3000
+# - 3,5 => 3.5
 def normalize_id_number_text(text: str) -> str:
     if not text:
         return text
     t = text.strip()
 
-    # Hapus titik sebagai pemisah ribuan: 3.000 -> 3000, 12.345.678 -> 12345678
-    # (hanya hapus titik yang diikuti tepat 3 digit)
-    t = re.sub(r'(?<=\d)\.(?=\d{3}(\D|$))', '', t)
+    # Hapus pemisah ribuan baik "." maupun "," jika diikuti 3 digit
+    # Contoh: 12.345 -> 12345, 12,345 -> 12345, 1.234.567 -> 1234567, 1,234,567 -> 1234567
+    t = re.sub(r'(?<=\d)[\.,](?=\d{3}(\D|$))', '', t)
 
-    # Ubah koma desimal jadi titik: 3,5 -> 3.5
+    # Ubah koma desimal jadi titik (kalau masih ada)
+    # Contoh: 3,5 -> 3.5
     t = re.sub(r'(?<=\d),(?=\d)', '.', t)
 
     return t
+
+
+# ✅ TAMBAHAN: parse angka voice + dukung "koma" + satuan ribu/juta/miliar/triliun
+# Contoh:
+# - "tiga koma 5 ribu" -> 3.5 * 1000 -> 3500
+# - "3,000" -> 3000
+# - "3.000" -> 3000
+def parse_amount_id(text: str) -> int:
+    if not text:
+        return 0
+
+    raw = text.strip()
+    lower = raw.lower()
+
+    # Normalisasi teks untuk kasus angka digital "3,000" / "3.000" / "3,5"
+    tnorm = normalize_id_number_text(raw)
+
+    # Biar "koma" bisa jadi desimal (kalau convert_voice_to_number mendukung)
+    # (kalau tidak mendukung, tetap aman untuk angka digital)
+    tnorm2 = re.sub(r'\bkoma\b', '.', tnorm, flags=re.IGNORECASE)
+
+    val = convert_voice_to_number(tnorm2)
+    if val is None:
+        val = 0
+
+    scale_map = {
+        "ribu": 1_000,
+        "juta": 1_000_000,
+        "miliar": 1_000_000_000,
+        "triliun": 1_000_000_000_000,
+    }
+
+    scale = None
+    for k, m in scale_map.items():
+        if k in lower:
+            scale = m
+            break
+
+    # Jika ada satuan skala + ada indikasi desimal ("koma" / "x.y"), kalikan skala
+    # Contoh: 3.5 + "ribu" => 3500
+    has_decimal_hint = ("koma" in lower) or bool(re.search(r'\d\.\d', str(val)))
+    if scale and has_decimal_hint:
+        try:
+            f = float(val)
+            # jika f masih kecil (mis: 3.5), berarti maksudnya "3.5 ribu" -> 3500
+            if f < scale:
+                val = f * scale
+        except:
+            pass
+
+    try:
+        return int(round(float(val)))
+    except:
+        digits = re.sub(r'\D+', '', str(val))
+        return int(digits) if digits else 0
 
 
 # ✅ TAMBAHAN: buat nama file unik (Quotation - Nama PT, Quotation - Nama PT (2), dst)
@@ -72,18 +130,16 @@ def make_unique_filename_base(base_name: str) -> str:
     if not base_name:
         base_name = "Quotation - Penawaran"
 
-    # FILES_DIR dari config_new (dipakai juga di route download)
     try:
         folder = str(FILES_DIR)
     except Exception:
         folder = "static/files"
 
     def exists_any(name: str) -> bool:
-        # cek kemungkinan docx/pdf (dan kalau sistem Anda pernah pakai underscore, tetap aman)
         return (
             os.path.exists(os.path.join(folder, f"{name}.docx")) or
             os.path.exists(os.path.join(folder, f"{name}.pdf")) or
-            os.path.exists(os.path.join(folder, name))  # kalau create_docx mengembalikan full name langsung
+            os.path.exists(os.path.join(folder, name))
         )
 
     if not exists_any(base_name):
@@ -385,8 +441,8 @@ def chat():
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga':
-            # ✅ REVISI: normalisasi "3.000" supaya tidak jadi 3.0
-            harga_converted = convert_voice_to_number(normalize_id_number_text(text))
+            # ✅ REVISI: dukung 3.000 / 3,000 / "tiga koma 5 ribu"
+            harga_converted = parse_amount_id(text)
             state['data']['current_item']['harga'] = harga_converted
 
             state['data']['items_limbah'].append(state['data']['current_item'])
@@ -443,8 +499,8 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_transportasi':
-            # ✅ REVISI: normalisasi angka
-            transportasi_converted = convert_voice_to_number(normalize_id_number_text(text))
+            # ✅ REVISI: dukung 3.000 / 3,000 / voice ribu/juta
+            transportasi_converted = parse_amount_id(text)
             state['data']['harga_transportasi'] = transportasi_converted
             state['step'] = 'tanya_mou'
             conversations[sid] = state
@@ -496,8 +552,8 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_mou':
-            # ✅ REVISI: normalisasi angka
-            mou_converted = convert_voice_to_number(normalize_id_number_text(text))
+            # ✅ REVISI: dukung 3.000 / 3,000 / voice ribu/juta
+            mou_converted = parse_amount_id(text)
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
             conversations[sid] = state
