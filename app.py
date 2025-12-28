@@ -70,10 +70,7 @@ def normalize_id_number_text(text: str) -> str:
 
 
 # ✅ TAMBAHAN: parse angka voice + dukung "koma" + satuan ribu/juta/miliar/triliun
-# Contoh:
-# - "tiga koma 5 ribu" -> 3.5 * 1000 -> 3500
-# - "3,000" -> 3000
-# - "3.000" -> 3000
+# Fix kasus: "tiga koma lima ribu" jangan jadi 8000, tapi jadi 3500
 def parse_amount_id(text: str) -> int:
     if not text:
         return 0
@@ -81,41 +78,82 @@ def parse_amount_id(text: str) -> int:
     raw = text.strip()
     lower = raw.lower()
 
-    # Normalisasi teks untuk kasus angka digital "3,000" / "3.000" / "3,5"
-    tnorm = normalize_id_number_text(raw)
+    # mapping digit kata (0-9) untuk kasus "koma"
+    digit_map = {
+        "nol": 0, "kosong": 0,
+        "satu": 1, "se": 1,
+        "dua": 2,
+        "tiga": 3,
+        "empat": 4,
+        "lima": 5,
+        "enam": 6,
+        "tujuh": 7,
+        "delapan": 8,
+        "sembilan": 9
+    }
 
-    # Biar "koma" bisa jadi desimal (kalau convert_voice_to_number mendukung)
-    # (kalau tidak mendukung, tetap aman untuk angka digital)
-    tnorm2 = re.sub(r'\bkoma\b', '.', tnorm, flags=re.IGNORECASE)
+    # helper: ambil digit dari token (angka "5" atau kata "lima")
+    def token_to_digit(tok: str):
+        tok = tok.strip().lower()
+        if tok.isdigit():
+            return int(tok)
+        return digit_map.get(tok, None)
 
-    val = convert_voice_to_number(tnorm2)
-    if val is None:
-        val = 0
-
+    # skala satuan
     scale_map = {
         "ribu": 1_000,
         "juta": 1_000_000,
         "miliar": 1_000_000_000,
         "triliun": 1_000_000_000_000,
     }
-
     scale = None
     for k, m in scale_map.items():
         if k in lower:
             scale = m
             break
 
-    # Jika ada satuan skala + ada indikasi desimal ("koma" / "x.y"), kalikan skala
-    # Contoh: 3.5 + "ribu" => 3500
-    has_decimal_hint = ("koma" in lower) or bool(re.search(r'\d\.\d', str(val)))
-    if scale and has_decimal_hint:
-        try:
-            f = float(val)
-            # jika f masih kecil (mis: 3.5), berarti maksudnya "3.5 ribu" -> 3500
-            if f < scale:
-                val = f * scale
-        except:
-            pass
+    # 1) PRIORITAS: jika ada kata "koma" -> parse desimal manual
+    if "koma" in lower:
+        parts = re.split(r'\bkoma\b', lower, maxsplit=1)
+        left_part = parts[0].strip()
+        right_part = parts[1].strip() if len(parts) > 1 else ""
+
+        # ambil token terakhir dari kiri (biasanya "tiga" atau "3")
+        left_tokens = re.findall(r'[a-zA-Z0-9]+', left_part)
+        left_tok = left_tokens[-1] if left_tokens else ""
+        left_digit = token_to_digit(left_tok)
+
+        # ambil token pertama dari kanan (biasanya "lima" atau "5")
+        right_tokens = re.findall(r'[a-zA-Z0-9]+', right_part)
+        right_tok = right_tokens[0] if right_tokens else ""
+        right_digit = token_to_digit(right_tok)
+
+        if left_digit is not None and right_digit is not None:
+            val = float(f"{left_digit}.{right_digit}")
+
+            # jika ada skala (ribu/juta/...), kalikan
+            if scale:
+                val *= scale
+
+            return int(round(val))
+
+        # kalau gagal parse manual, lanjut fallback
+
+    # 2) Normalisasi angka digital: 3.000 / 3,000 / 3,5
+    tnorm = normalize_id_number_text(raw)
+
+    # 3) pakai convert_voice_to_number sebagai default
+    val = convert_voice_to_number(tnorm)
+    if val is None:
+        val = 0
+
+    # 4) Jika ada skala, kalikan (mis: 3 ribu => 3000)
+    try:
+        f = float(val)
+        if scale and f < scale:
+            val = f * scale
+    except:
+        pass
 
     try:
         return int(round(float(val)))
@@ -441,7 +479,7 @@ def chat():
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga':
-            # ✅ REVISI: dukung 3.000 / 3,000 / "tiga koma 5 ribu"
+            # ✅ REVISI: dukung 3.000 / 3,000 / "tiga koma lima ribu" -> 3500
             harga_converted = parse_amount_id(text)
             state['data']['current_item']['harga'] = harga_converted
 
@@ -499,7 +537,6 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_transportasi':
-            # ✅ REVISI: dukung 3.000 / 3,000 / voice ribu/juta
             transportasi_converted = parse_amount_id(text)
             state['data']['harga_transportasi'] = transportasi_converted
             state['step'] = 'tanya_mou'
@@ -552,7 +589,6 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
         elif state['step'] == 'harga_mou':
-            # ✅ REVISI: dukung 3.000 / 3,000 / voice ribu/juta
             mou_converted = parse_amount_id(text)
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
