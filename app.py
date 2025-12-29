@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify, render_template, send_from_directory,
 from datetime import datetime
 import platform
 
-from docx import Document  # ✅ tambahan untuk generate MoU dari template DOCX
+from docx import Document  # ✅ untuk generate MoU dari template DOCX
 
 from config_new import *
 from limbah_database import (
@@ -24,15 +24,16 @@ from utils import (
     db_update_title, db_delete_history, db_append_message, db_update_state,
     get_next_nomor, create_docx, create_pdf,
     search_company_address, search_company_address_ai, call_ai,
-    PDF_AVAILABLE, PDF_METHOD, LIBREOFFICE_PATH
+    PDF_AVAILABLE, PDF_METHOD, LIBREOFFICE_PATH,
+    FILES_DIR  # pastikan ada di utils/config kamu
 )
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = FLASK_SECRET_KEY
 
 conversations = {}
-
 init_db()
+
 
 @app.after_request
 def add_cors_headers(resp):
@@ -42,7 +43,7 @@ def add_cors_headers(resp):
     return resp
 
 
-# ✅ TAMBAHAN: helper untuk deteksi NON B3 (berbagai variasi penulisan)
+# ✅ helper deteksi NON B3
 def is_non_b3_input(text: str) -> bool:
     if not text:
         return False
@@ -51,7 +52,7 @@ def is_non_b3_input(text: str) -> bool:
     return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
 
 
-# ✅ TAMBAHAN: normalisasi angka format Indonesia:
+# ✅ normalisasi angka format Indonesia:
 # - 3.000 / 3,000 => 3000
 # - 3,5 => 3.5
 def normalize_id_number_text(text: str) -> str:
@@ -63,8 +64,8 @@ def normalize_id_number_text(text: str) -> str:
     return t
 
 
-# ✅ TAMBAHAN: parse angka voice + dukung "koma" + satuan ribu/juta/miliar/triliun
-# Fix kasus: "tiga koma lima ribu" jangan jadi 8000, tapi jadi 3500
+# ✅ parse angka voice + dukung "koma" + satuan ribu/juta/miliar/triliun
+# Fix kasus: "tiga koma lima ribu" => 3500 (bukan 8000)
 def parse_amount_id(text: str) -> int:
     if not text:
         return 0
@@ -99,22 +100,21 @@ def parse_amount_id(text: str) -> int:
     }
     scale = None
     for k, m in scale_map.items():
-        if k in lower:
+        if re.search(rf'\b{k}\b', lower):
             scale = m
             break
 
-    if "koma" in lower:
+    # kasus "tiga koma lima ribu" -> 3.5 * 1000 = 3500
+    if re.search(r'\bkoma\b', lower):
         parts = re.split(r'\bkoma\b', lower, maxsplit=1)
-        left_part = parts[0].strip()
-        right_part = parts[1].strip() if len(parts) > 1 else ""
+        left_part = (parts[0] or "").strip()
+        right_part = (parts[1] or "").strip()
 
         left_tokens = re.findall(r'[a-zA-Z0-9]+', left_part)
-        left_tok = left_tokens[-1] if left_tokens else ""
-        left_digit = token_to_digit(left_tok)
-
         right_tokens = re.findall(r'[a-zA-Z0-9]+', right_part)
-        right_tok = right_tokens[0] if right_tokens else ""
-        right_digit = token_to_digit(right_tok)
+
+        left_digit = token_to_digit(left_tokens[-1]) if left_tokens else None
+        right_digit = token_to_digit(right_tokens[0]) if right_tokens else None
 
         if left_digit is not None and right_digit is not None:
             val = float(f"{left_digit}.{right_digit}")
@@ -122,26 +122,24 @@ def parse_amount_id(text: str) -> int:
                 val *= scale
             return int(round(val))
 
+    # fallback: angka biasa / voice biasa
     tnorm = normalize_id_number_text(raw)
     val = convert_voice_to_number(tnorm)
     if val is None:
         val = 0
 
+    # kalau disebut "ribu/juta" tapi convert hasil kecil, kalikan skala
     try:
         f = float(val)
         if scale and f < scale:
-            val = f * scale
-    except:
-        pass
-
-    try:
-        return int(round(float(val)))
+            f = f * scale
+        return int(round(f))
     except:
         digits = re.sub(r'\D+', '', str(val))
         return int(digits) if digits else 0
 
 
-# ✅ TAMBAHAN: buat nama file unik (Quotation - Nama PT / MoU - Nama PT, dst)
+# ✅ buat nama file unik (Quotation - Nama PT / MoU - Nama PT)
 def make_unique_filename_base(base_name: str) -> str:
     base_name = (base_name or "").strip()
     if not base_name:
@@ -152,11 +150,12 @@ def make_unique_filename_base(base_name: str) -> str:
     except Exception:
         folder = "static/files"
 
+    os.makedirs(folder, exist_ok=True)
+
     def exists_any(name: str) -> bool:
         return (
             os.path.exists(os.path.join(folder, f"{name}.docx")) or
-            os.path.exists(os.path.join(folder, f"{name}.pdf")) or
-            os.path.exists(os.path.join(folder, name))
+            os.path.exists(os.path.join(folder, f"{name}.pdf"))
         )
 
     if not exists_any(base_name):
@@ -171,7 +170,7 @@ def make_unique_filename_base(base_name: str) -> str:
 
 
 # ===========================
-# ✅ TAMBAHAN: COUNTER KHUSUS MOU (mulai dari 000)
+# ✅ COUNTER KHUSUS MOU (mulai dari 000)
 # ===========================
 def _mou_counter_path() -> str:
     try:
@@ -186,7 +185,7 @@ def load_mou_counter() -> int:
     path = _mou_counter_path()
     try:
         if not os.path.exists(path):
-            return -1  # supaya next jadi 0 -> "000"
+            return -1  # next jadi 0 -> "000"
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f) or {}
         return int(data.get("counter", -1))
@@ -216,7 +215,6 @@ def month_to_roman(m: int) -> str:
 
 
 def company_to_code(name: str) -> str:
-    # contoh: "PT Panpan Lucky Indonesia" -> "PLI"
     if not name:
         return "XXX"
     t = re.sub(r'[^A-Za-z0-9 ]+', ' ', name).strip()
@@ -231,7 +229,7 @@ def company_to_code(name: str) -> str:
 
 
 def build_mou_nomor_surat(mou_data: dict) -> str:
-    # format: 000/PKPLNB3/PLI-STBJ-HBSP/XII/2025
+    # contoh: 000/PKPLNB3/PLI-STBJ-HBSP/XII/2025
     no_depan = (mou_data.get("nomor_depan") or "").strip()
     kode_p1 = company_to_code((mou_data.get("pihak_pertama") or "").strip())
     kode_p2 = (mou_data.get("pihak_kedua_kode") or "STBJ").strip().upper()
@@ -247,16 +245,11 @@ def build_mou_nomor_surat(mou_data: dict) -> str:
     return f"{no_depan}/PKPLNB3/{kode_p1}-{kode_p2}-{kode_p3}/{romawi}/{tahun}"
 
 
-# ✅ TAMBAHAN: format hari & tanggal Indonesia untuk MoU
+# ✅ format hari & tanggal Indonesia untuk MoU
 def format_tanggal_indonesia(dt: datetime) -> str:
     hari_map = {
-        0: "Senin",
-        1: "Selasa",
-        2: "Rabu",
-        3: "Kamis",
-        4: "Jumat",
-        5: "Sabtu",
-        6: "Minggu",
+        0: "Senin", 1: "Selasa", 2: "Rabu", 3: "Kamis",
+        4: "Jumat", 5: "Sabtu", 6: "Minggu",
     }
     bulan_map = {
         1: "Januari", 2: "Februari", 3: "Maret", 4: "April",
@@ -268,72 +261,55 @@ def format_tanggal_indonesia(dt: datetime) -> str:
     return f"{hari}, tanggal {dt.day} {bulan} {dt.year}"
 
 
-def replace_in_paragraph(paragraph, old: str, new: str):
-    if not old:
-        return
-    if old not in paragraph.text:
-        return
+# ===========================
+# ✅ DOCX REPLACE (AMAN, TIDAK MERUSAK BOLD)
+# ===========================
+def replace_text_in_runs(paragraph, old: str, new: str) -> bool:
+    if not old or not paragraph.text or old not in paragraph.text:
+        return False
+    changed = False
     for run in paragraph.runs:
         if old in run.text:
             run.text = run.text.replace(old, new)
+            changed = True
+    return changed
 
 
-def replace_regex_in_paragraph(paragraph, pattern: str, repl: str):
+def replace_regex_in_runs(paragraph, pattern: str, repl: str) -> bool:
     if not paragraph.text:
+        return False
+    changed = False
+    for run in paragraph.runs:
+        if re.search(pattern, run.text, flags=re.IGNORECASE):
+            run.text = re.sub(pattern, repl, run.text, flags=re.IGNORECASE)
+            changed = True
+    return changed
+
+
+def set_paragraph_text_keep_paragraph_style(paragraph, new_text: str):
+    """
+    Untuk paragraf deskripsi pihak (biasanya tidak ada bold-run),
+    kita set ulang isi paragraf agar rapi (spasi tidak nyambung, tanpa ');').
+    Paragraph style/indent/alignment tetap, tapi run-style internal jadi 1 run.
+    """
+    if paragraph.text == new_text:
         return
-    if not re.search(pattern, paragraph.text, flags=re.IGNORECASE):
-        return
-    full = paragraph.text
-    full2 = re.sub(pattern, repl, full, flags=re.IGNORECASE)
-    if full2 != full:
-        for run in paragraph.runs:
-            run.text = ""
-        if paragraph.runs:
-            paragraph.runs[0].text = full2
-        else:
-            paragraph.add_run(full2)
+    for r in paragraph.runs:
+        r.text = ""
+    if paragraph.runs:
+        paragraph.runs[0].text = new_text
+    else:
+        paragraph.add_run(new_text)
 
 
-# ✅ TAMBAHAN: helper replace regex di semua paragraf (doc + tables)
-def replace_regex_everywhere(doc, pattern: str, repl: str):
-    for p in doc.paragraphs:
-        replace_regex_in_paragraph(p, pattern, repl)
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    replace_regex_in_paragraph(p, pattern, repl)
-
-
-# ✅ TAMBAHAN: isi signature cell berdasarkan label "PIHAK PERTAMA/KETIGA"
-def set_signature_cell(cell, pihak_label: str, company: str, signer_name: str, signer_title: str):
-    # Cell paragraphs biasanya:
-    # 0: PIHAK ...
-    # 1: Company
-    # 2: Nama
-    # 3: Jabatan
-    paras = cell.paragraphs
-    if len(paras) >= 2:
-        # pastikan label cocok
-        if paras[0].text.strip().upper() == pihak_label.strip().upper():
-            paras[1].text = company or paras[1].text
-            if len(paras) >= 3 and signer_name:
-                paras[2].text = signer_name
-            if len(paras) >= 4 and signer_title:
-                paras[3].text = signer_title
-
-
-# ✅ TAMBAHAN: buat DOCX MoU dari template (template di ROOT)
+# ===========================
+# ✅ BUAT DOCX MoU dari template (template ada di ROOT: "tamplate MoU.docx")
+# ===========================
 def create_mou_docx(mou_data: dict, fname_base: str) -> str:
-    # ✅ TEMPLATE ADA DI ROOT PROJECT
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    template_path = os.path.join(BASE_DIR, "tamplate MoU.docx")
-
+    # ✅ sesuai request: template MoU berada di root, bukan folder templates
+    template_path = "tamplate MoU.docx"
     if not os.path.exists(template_path):
-        raise Exception(
-            "Template MoU tidak ditemukan. Pastikan ada di ROOT project:\n"
-            f"{template_path}"
-        )
+        raise Exception("Template MoU tidak ditemukan. Pastikan file 'tamplate MoU.docx' ada di root project.")
 
     doc = Document(template_path)
 
@@ -341,37 +317,44 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     pihak2 = (mou_data.get("pihak_kedua") or "").strip()
     pihak3 = (mou_data.get("pihak_ketiga") or "").strip()
 
-    alamat1 = (mou_data.get("alamat_pihak_pertama") or "").strip()
-    alamat3 = (mou_data.get("alamat_pihak_ketiga") or "").strip()
+    alamat_p1 = (mou_data.get("alamat_pihak_pertama") or "").strip() or "Di Tempat"
 
-    nomor_full = (mou_data.get("nomor_surat") or mou_data.get("nomor_depan") or "").strip()
+    # alamat pihak ketiga: kalau HBSP, biarkan alamat template (paling aman format),
+    # untuk selain HBSP kalau kamu punya alamatnya nanti bisa isi mou_data['alamat_pihak_ketiga']
+    alamat_p3 = (mou_data.get("alamat_pihak_ketiga") or "").strip()
+
+    nomor_full = (mou_data.get("nomor_surat") or "").strip()
+    if not nomor_full:
+        nomor_full = build_mou_nomor_surat(mou_data)
+
     tanggal_text = format_tanggal_indonesia(datetime.now())
 
-    # signer (TTD)
+    # ttd (diminta jadi pertanyaan terakhir, tapi di DOCX harus diganti)
     ttd_p1_nama = (mou_data.get("ttd_pihak_pertama_nama") or "").strip()
-    ttd_p1_jabatan = (mou_data.get("ttd_pihak_pertama_jabatan") or "").strip()
-    ttd_p3_nama = (mou_data.get("ttd_pihak_ketiga_nama") or "").strip()
-    ttd_p3_jabatan = (mou_data.get("ttd_pihak_ketiga_jabatan") or "").strip()
+    ttd_p1_jab = (mou_data.get("ttd_pihak_pertama_jabatan") or "").strip()
 
-    # ✅ kandidat yang umum muncul di template
+    ttd_p3_nama = (mou_data.get("ttd_pihak_ketiga_nama") or "").strip()
+    ttd_p3_jab = (mou_data.get("ttd_pihak_ketiga_jabatan") or "").strip()
+
+    # ===========================
+    # 1) Ganti NAMA PIHAK (AMAN, TIDAK MERUSAK BOLD)
+    # ===========================
     contoh_pihak1_candidates = [
         "PT. PANPAN LUCKY INDONESIA",
-        "PT PANPAN LUCKY INDONESIA",
         "PT. Panpan Lucky Indonesia",
+        "PT PANPAN LUCKY INDONESIA",
         "PT Panpan Lucky Indonesia",
+        "PT. Panpan Lucky Indonesia,",
+        "PT. Panpan Lucky Indonesia ,",
     ]
     contoh_pihak2_candidates = [
         "PT. SARANA TRANS BERSAMA JAYA",
-        "PT SARANA TRANS BERSAMA JAYA",
         "PT Sarana Trans Bersama Jaya",
-        "PT. Sarana Trans Bersama Jaya",
         "PT STBJ",
     ]
     contoh_pihak3_candidates = [
         "PT. HARAPAN BARU SEJAHTERA PLASTIK",
-        "PT HARAPAN BARU SEJAHTERA PLASTIK",
         "PT Harapan Baru Sejahtera Plastik",
-        "PT. Harapan Baru Sejahtera Plastik",
         "PT. HBSP",
         "PT HBSP",
     ]
@@ -381,61 +364,137 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
             return
         for p in doc.paragraphs:
             for old in old_list:
-                replace_in_paragraph(p, old, new_value)
+                replace_text_in_runs(p, old, new_value)
         for t in doc.tables:
             for row in t.rows:
                 for cell in row.cells:
                     for p in cell.paragraphs:
                         for old in old_list:
-                            replace_in_paragraph(p, old, new_value)
+                            replace_text_in_runs(p, old, new_value)
 
-    # ✅ ganti nama perusahaan (seluruh dokumen)
     replace_everywhere(contoh_pihak1_candidates, pihak1)
     replace_everywhere(contoh_pihak2_candidates, pihak2)
     replace_everywhere(contoh_pihak3_candidates, pihak3)
 
-    # ✅ Replace nomor: baris "No : ..."
-    replace_regex_everywhere(doc, r'\bNo\s*:\s*.*', f"No : {nomor_full}")
+    # ===========================
+    # 2) Ganti Nomor: "No : ...." (TIDAK MERUSAK BOLD)
+    # ===========================
+    def replace_nomor_everywhere():
+        done = False
+        for p in doc.paragraphs:
+            if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
+                if replace_regex_in_runs(p, r'\bNo\s*:\s*.*', f"No : {nomor_full}"):
+                    done = True
+        for t in doc.tables:
+            for row in t.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
+                            if replace_regex_in_runs(p, r'\bNo\s*:\s*.*', f"No : {nomor_full}"):
+                                done = True
+        return done
 
-    # ✅ Replace tanggal: baris "Pada hari ini ...."
-    replace_regex_everywhere(
-        doc,
-        r'Pada hari ini\s+.*?kami yang bertanda tangan di bawah ini\s*:\s*',
-        f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini : "
+    replace_nomor_everywhere()
+
+    # ===========================
+    # 3) Ganti kalimat "Pada hari ini ...." (AMAN)
+    # ===========================
+    def replace_tanggal_everywhere():
+        for p in doc.paragraphs:
+            if re.search(r'Pada hari ini', p.text, flags=re.IGNORECASE) and re.search(r'tanggal', p.text, flags=re.IGNORECASE):
+                replace_regex_in_runs(
+                    p,
+                    r'Pada hari ini.*',
+                    f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :"
+                )
+        for t in doc.tables:
+            for row in t.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        if re.search(r'Pada hari ini', p.text, flags=re.IGNORECASE) and re.search(r'tanggal', p.text, flags=re.IGNORECASE):
+                            replace_regex_in_runs(
+                                p,
+                                r'Pada hari ini.*',
+                                f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :"
+                            )
+
+    replace_tanggal_everywhere()
+
+    # ===========================
+    # 4) FIX: Deskripsi PIHAK PERTAMA & PIHAK KETIGA (agar nama+alamat benar, spasi rapi, TANPA ');')
+    #     (Ini yang kamu komplain: nama/alamat belum berubah, spasi nyambung, ada ');')
+    # ===========================
+    # Paragraf pihak pertama: pakai data alamat p1 + ttd p1 (kalau belum diisi, biarkan placeholder rapi)
+    if not ttd_p1_nama:
+        ttd_p1_nama = "........"
+    if not ttd_p1_jab:
+        ttd_p1_jab = "........"
+
+    # Paragraf pihak ketiga: alamat p3 opsional.
+    # kalau tidak diisi, kita biarkan kalimat tanpa memaksa alamat (biar tidak bikin format jadi aneh)
+    if not ttd_p3_nama:
+        ttd_p3_nama = "........"
+    if not ttd_p3_jab:
+        ttd_p3_jab = "........"
+
+    p1_par = (
+        f"\t{pihak1}, suatu perusahaan yang berkedudukan dan berkantor di {alamat_p1}, "
+        f"yang dalam hal ini diwakili oleh {ttd_p1_nama} dalam jabatannya sebagai {ttd_p1_jab}. "
+        f"Oleh karena itu sah bertindak untuk dan atas nama Perusahaan (untuk selanjutnya disebut sebagai “PIHAK PERTAMA”);"
     )
 
-    # ✅ FIX YANG ANDA MINTA:
-    # ganti alamat pada paragraf PIHAK PERTAMA & PIHAK KETIGA (bagian “berkedudukan …”)
-    # Kita ganti bagian "berkedudukan ..." sampai sebelum "selanjutnya/disebut"
-    if alamat1:
-        replace_regex_everywhere(
-            doc,
-            r'(PIHAK PERTAMA.*?berkedudukan\s+(?:di\s+)?)((?:.|\n)*?)(\s*(?:untuk\s+selanjutnya|yang\s+selanjutnya|selanjutnya\s+))',
-            r'\1' + alamat1 + r'\3'
+    # PIHAK KETIGA: kalau alamat_p3 kosong, jangan paksa "di ..."
+    if alamat_p3:
+        p3_par = (
+            f"\t{pihak3}, suatu perusahaan yang didirikan berdasarkan hukum Republik Indonesia, "
+            f"berkedudukan dan berkantor di {alamat_p3}. "
+            f"sebagai Pengolah/Pengumpul/Pemanfaat Limbah B3 yang selanjutnya disebut sebagai PIHAK KETIGA."
         )
-        replace_regex_everywhere(
-            doc,
-            r'(berkedudukan\s+(?:di\s+)?)(.*?)(\s*(?:untuk\s+selanjutnya|yang\s+selanjutnya|selanjutnya\s+))',
-            r'\1' + alamat1 + r'\3'
+    else:
+        p3_par = (
+            f"\t{pihak3}, suatu perusahaan yang didirikan berdasarkan hukum Republik Indonesia, "
+            f"sebagai Pengolah/Pengumpul/Pemanfaat Limbah B3 yang selanjutnya disebut sebagai PIHAK KETIGA."
         )
 
-    if alamat3:
-        replace_regex_everywhere(
-            doc,
-            r'(PIHAK KETIGA.*?berkedudukan\s+(?:di\s+)?)((?:.|\n)*?)(\s*(?:untuk\s+selanjutnya|yang\s+selanjutnya|selanjutnya\s+))',
-            r'\1' + alamat3 + r'\3'
-        )
+    def replace_party_paragraphs():
+        # cari paragraf panjang yang mengandung PIHAK PERTAMA / PIHAK KETIGA
+        for p in doc.paragraphs:
+            txt = p.text or ""
+            if ("PIHAK PERTAMA" in txt) and ("suatu perusahaan" in txt):
+                # set ulang paragraf pihak pertama rapi
+                set_paragraph_text_keep_paragraph_style(p, p1_par)
 
-    # ✅ Isi table limbah (Jenis + Kode)
+            if ("PIHAK KETIGA" in txt) and ("Pengolah/Pengumpul/Pemanfaat" in txt):
+                set_paragraph_text_keep_paragraph_style(p, p3_par)
+
+        for t in doc.tables:
+            for row in t.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        txt = p.text or ""
+                        if ("PIHAK PERTAMA" in txt) and ("suatu perusahaan" in txt):
+                            set_paragraph_text_keep_paragraph_style(p, p1_par)
+                        if ("PIHAK KETIGA" in txt) and ("Pengolah/Pengumpul/Pemanfaat" in txt):
+                            set_paragraph_text_keep_paragraph_style(p, p3_par)
+
+    replace_party_paragraphs()
+
+    # ===========================
+    # 5) Isi tabel limbah: (No, Jenis Limbah, Kode Limbah)
+    # ===========================
     items = mou_data.get("items_limbah") or []
     target_table = None
+
     for t in doc.tables:
-        header_text = " ".join([c.text.strip() for c in t.rows[0].cells]) if t.rows else ""
+        if not t.rows:
+            continue
+        header_text = " ".join([c.text.strip() for c in t.rows[0].cells])
         if ("Jenis Limbah" in header_text) and ("Kode Limbah" in header_text):
             target_table = t
             break
 
     if target_table is not None:
+        # bersihkan row data, sisakan header
         while len(target_table.rows) > 1:
             target_table._tbl.remove(target_table.rows[1]._tr)
 
@@ -449,20 +508,43 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
             if len(cells) >= 3:
                 cells[2].text = (it.get("kode_limbah") or "").strip()
 
-    # ✅ FIX YANG ANDA MINTA: ganti tanda tangan (nama perusahaan + nama ttd + jabatan)
-    # Cari tabel signature yang punya PIHAK PERTAMA/KEDUA/KETIGA
-    for t in doc.tables:
-        # signature biasanya 1 row 3 col
-        if len(t.rows) == 1 and len(t.columns) == 3:
-            c0 = t.rows[0].cells[0].text.upper()
-            c1 = t.rows[0].cells[1].text.upper()
-            c2 = t.rows[0].cells[2].text.upper()
-            if "PIHAK PERTAMA" in c0 and "PIHAK KEDUA" in c1 and "PIHAK KETIGA" in c2:
-                # set pihak 1 & 3 sesuai input user
-                set_signature_cell(t.rows[0].cells[0], "PIHAK PERTAMA", pihak1, ttd_p1_nama, ttd_p1_jabatan)
-                set_signature_cell(t.rows[0].cells[2], "PIHAK KETIGA", pihak3, ttd_p3_nama, ttd_p3_jabatan)
-                break
+    # ===========================
+    # 6) Ganti tanda tangan bawah: nama/jabatan pihak 1 & 3
+    # ===========================
+    def replace_signature_block():
+        # default contoh dari template (yang kamu upload)
+        old_p1 = "PT. Panpan Lucky Indonesia"
+        old_p1_sig_name = "Huang Feifang"
+        old_p1_sig_role = "Direktur Utama"
 
+        old_p3 = "PT Harapan Baru Sejahtera Plastik"
+        old_p3_sig_name = "Yogi Permana"
+        old_p3_sig_role = "General Manager"
+
+        for p in doc.paragraphs:
+            replace_text_in_runs(p, old_p1, pihak1)
+            replace_text_in_runs(p, old_p1_sig_name, ttd_p1_nama)
+            replace_text_in_runs(p, old_p1_sig_role, ttd_p1_jab)
+
+            replace_text_in_runs(p, old_p3, pihak3)
+            replace_text_in_runs(p, old_p3_sig_name, ttd_p3_nama)
+            replace_text_in_runs(p, old_p3_sig_role, ttd_p3_jab)
+
+        for t in doc.tables:
+            for row in t.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        replace_text_in_runs(p, old_p1, pihak1)
+                        replace_text_in_runs(p, old_p1_sig_name, ttd_p1_nama)
+                        replace_text_in_runs(p, old_p1_sig_role, ttd_p1_jab)
+
+                        replace_text_in_runs(p, old_p3, pihak3)
+                        replace_text_in_runs(p, old_p3_sig_name, ttd_p3_nama)
+                        replace_text_in_runs(p, old_p3_sig_role, ttd_p3_jab)
+
+    replace_signature_block()
+
+    # save
     try:
         folder = str(FILES_DIR)
     except Exception:
@@ -471,13 +553,13 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
 
     out_path = os.path.join(folder, f"{fname_base}.docx")
     doc.save(out_path)
-
     return f"{fname_base}.docx"
 
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
 
 @app.route("/api/history", methods=["GET"])
 def api_history_list():
@@ -487,6 +569,7 @@ def api_history_list():
         return jsonify({"items": items})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/history/<int:history_id>", methods=["GET"])
 def api_history_detail(history_id):
@@ -508,6 +591,7 @@ def api_history_detail(history_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/api/history/<int:history_id>", methods=["PUT"])
 def api_history_update(history_id):
     try:
@@ -523,6 +607,7 @@ def api_history_update(history_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/api/history/<int:history_id>", methods=["DELETE"])
 def api_history_delete(history_id):
     try:
@@ -532,6 +617,7 @@ def api_history_delete(history_id):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/documents", methods=["GET"])
 def api_documents():
@@ -605,8 +691,8 @@ def chat():
                 pass
 
         # ============================================================
-        # ✅ FITUR MOU TRIPARTIT (BARU)
-        # Trigger: user ketik "mou"
+        # ✅ FITUR MOU TRIPARTIT
+        # Trigger: user ketik "mou" ketika idle
         # ============================================================
         if ('mou' in lower) and (state.get('step') == 'idle'):
             nomor_depan = get_next_mou_no_depan()  # ✅ mulai dari 000
@@ -619,12 +705,12 @@ def chat():
                 'pihak_kedua': "PT Sarana Trans Bersama Jaya",
                 'pihak_kedua_kode': "STBJ",
                 'pihak_pertama': "",
+                'alamat_pihak_pertama': "",
                 'pihak_ketiga': "",
                 'pihak_ketiga_kode': "",
-                'alamat_pihak_pertama': "",
                 'alamat_pihak_ketiga': "",
 
-                # ✅ NEW: ttd pihak 1 & 3
+                # ✅ ttd disimpan, tapi pertanyaannya dibuat TERAKHIR (sesuai request)
                 'ttd_pihak_pertama_nama': "",
                 'ttd_pihak_pertama_jabatan': "",
                 'ttd_pihak_ketiga_nama': "",
@@ -635,8 +721,7 @@ def chat():
             out_text = (
                 "Baik, saya bantu buatkan <b>MoU Tripartit</b>.<br><br>"
                 f"✅ No Depan: <b>{nomor_depan}</b> (auto mulai 000)<br>"
-                "✅ Format nomor mengikuti template (otomatis).<br>"
-                "✅ Tanggal: <b>otomatis hari ini</b><br><br>"
+                "✅ Nomor & tanggal mengikuti template (otomatis).<br><br>"
                 "❓ <b>1. Nama Perusahaan (PIHAK PERTAMA / Penghasil Limbah)?</b>"
             )
 
@@ -659,7 +744,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_created or history_id_in})
 
-        # Step MoU: pihak pertama
+        # MoU: input pihak pertama
         if state.get('step') == 'mou_pihak_pertama':
             state['data']['pihak_pertama'] = text.strip()
 
@@ -670,7 +755,6 @@ def chat():
                 alamat = "Di Tempat"
 
             state['data']['alamat_pihak_pertama'] = alamat
-
             state['step'] = 'mou_pilih_pihak_ketiga'
             conversations[sid] = state
 
@@ -691,19 +775,13 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        # Step MoU: pilih pihak ketiga
+        # MoU: pilih pihak ketiga
         if state.get('step') == 'mou_pilih_pihak_ketiga':
             pilihan = text.strip().upper()
 
             mapping = {
-                "1": "HBSP",
-                "2": "KJL",
-                "3": "MBI",
-                "4": "CGA",
-                "HBSP": "HBSP",
-                "KJL": "KJL",
-                "MBI": "MBI",
-                "CGA": "CGA",
+                "1": "HBSP", "2": "KJL", "3": "MBI", "4": "CGA",
+                "HBSP": "HBSP", "KJL": "KJL", "MBI": "MBI", "CGA": "CGA",
             }
             kode = mapping.get(pilihan)
             if not kode:
@@ -725,96 +803,27 @@ def chat():
             state['data']['pihak_ketiga'] = pihak3_nama_map.get(kode, kode)
             state['data']['pihak_ketiga_kode'] = kode
 
-            # (opsional) kalau mau alamat pihak3 bisa Anda isi manual, untuk sekarang pakai default kosong
-            # Anda bisa isi pakai search seperti pihak1 kalau ada data.
-            state['data']['alamat_pihak_ketiga'] = state['data'].get('alamat_pihak_ketiga') or ""
+            # kalau kamu punya alamat pihak ketiga untuk masing-masing, isi di sini.
+            # default kosong (HBSP aman karena template sudah ada alamatnya).
+            pihak3_alamat_map = {
+                "HBSP": "",  # biarkan template yang mengatur alamat
+                "KJL": "",
+                "MBI": "",
+                "CGA": "",
+            }
+            state['data']['alamat_pihak_ketiga'] = pihak3_alamat_map.get(kode, "")
 
-            # ✅ SET nomor surat full sesuai format template
             state['data']['nomor_surat'] = build_mou_nomor_surat(state['data'])
-
-            # ✅ NEW: tanyakan ttd pihak pertama
-            state['step'] = 'mou_ttd_p1_nama'
-            conversations[sid] = state
-
-            out_text = (
-                f"✅ PIHAK KETIGA: <b>{state['data']['pihak_ketiga']}</b><br>"
-                f"✅ Nomor MoU: <b>{state['data']['nomor_surat']}</b><br><br>"
-                "❓ <b>3. Nama Penandatangan (TTD) PIHAK PERTAMA?</b><br>"
-                "<i>(Contoh: Budi Santoso)</i>"
-            )
-
-            if history_id_in:
-                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                db_update_state(int(history_id_in), state)
-
-            return jsonify({"text": out_text, "history_id": history_id_in})
-
-        # ✅ NEW: input ttd pihak1 nama
-        if state.get('step') == 'mou_ttd_p1_nama':
-            state['data']['ttd_pihak_pertama_nama'] = text.strip()
-            state['step'] = 'mou_ttd_p1_jabatan'
-            conversations[sid] = state
-
-            out_text = (
-                f"✅ TTD PIHAK PERTAMA: <b>{state['data']['ttd_pihak_pertama_nama']}</b><br><br>"
-                "❓ <b>4. Jabatan Penandatangan PIHAK PERTAMA?</b><br>"
-                "<i>(Contoh: Direktur Utama / Manager / Owner)</i>"
-            )
-
-            if history_id_in:
-                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                db_update_state(int(history_id_in), state)
-
-            return jsonify({"text": out_text, "history_id": history_id_in})
-
-        # ✅ NEW: input ttd pihak1 jabatan
-        if state.get('step') == 'mou_ttd_p1_jabatan':
-            state['data']['ttd_pihak_pertama_jabatan'] = text.strip()
-            state['step'] = 'mou_ttd_p3_nama'
-            conversations[sid] = state
-
-            out_text = (
-                f"✅ Jabatan PIHAK PERTAMA: <b>{state['data']['ttd_pihak_pertama_jabatan']}</b><br><br>"
-                "❓ <b>5. Nama Penandatangan (TTD) PIHAK KETIGA?</b><br>"
-                "<i>(Contoh: Andi Wijaya)</i>"
-            )
-
-            if history_id_in:
-                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                db_update_state(int(history_id_in), state)
-
-            return jsonify({"text": out_text, "history_id": history_id_in})
-
-        # ✅ NEW: input ttd pihak3 nama
-        if state.get('step') == 'mou_ttd_p3_nama':
-            state['data']['ttd_pihak_ketiga_nama'] = text.strip()
-            state['step'] = 'mou_ttd_p3_jabatan'
-            conversations[sid] = state
-
-            out_text = (
-                f"✅ TTD PIHAK KETIGA: <b>{state['data']['ttd_pihak_ketiga_nama']}</b><br><br>"
-                "❓ <b>6. Jabatan Penandatangan PIHAK KETIGA?</b><br>"
-                "<i>(Contoh: Direktur / General Manager)</i>"
-            )
-
-            if history_id_in:
-                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-                db_update_state(int(history_id_in), state)
-
-            return jsonify({"text": out_text, "history_id": history_id_in})
-
-        # ✅ NEW: input ttd pihak3 jabatan -> lanjut input limbah
-        if state.get('step') == 'mou_ttd_p3_jabatan':
-            state['data']['ttd_pihak_ketiga_jabatan'] = text.strip()
 
             state['step'] = 'mou_jenis_kode_limbah'
             state['data']['current_item'] = {}
             conversations[sid] = state
 
             out_text = (
-                f"✅ Jabatan PIHAK KETIGA: <b>{state['data']['ttd_pihak_ketiga_jabatan']}</b><br><br>"
+                f"✅ PIHAK KETIGA: <b>{state['data']['pihak_ketiga']}</b><br>"
+                f"✅ Nomor MoU: <b>{state['data']['nomor_surat']}</b><br><br>"
                 f"📦 <b>Item #1</b><br>"
-                "❓ <b>7. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
+                "❓ <b>3. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
                 "<i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau ketik <b>NON B3</b> untuk manual)</i>"
             )
 
@@ -824,7 +833,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        # Step MoU: input limbah (mirip quotation, tapi tanpa harga)
+        # MoU: input limbah (tanpa harga)
         if state.get('step') == 'mou_jenis_kode_limbah':
             if is_non_b3_input(text):
                 state['data']['current_item']['kode_limbah'] = "NON B3"
@@ -834,7 +843,7 @@ def chat():
 
                 out_text = (
                     "✅ Kode: <b>NON B3</b><br><br>"
-                    "❓ <b>7A. Jenis Limbah (manual) apa?</b><br>"
+                    "❓ <b>3A. Jenis Limbah (manual) apa?</b><br>"
                     "<i>(Contoh: 'plastik bekas', 'kertas bekas', dll)</i>"
                 )
                 if history_id_in:
@@ -848,12 +857,12 @@ def chat():
                 kode, data_limbah = find_limbah_by_jenis(text)
 
             if kode and data_limbah:
-                state['data']['current_item']['kode_limbah'] = kode
-                state['data']['current_item']['jenis_limbah'] = data_limbah['jenis']
-                state['step'] = 'mou_tambah_item'
-                state['data']['items_limbah'].append(state['data']['current_item'])
+                state['data']['items_limbah'].append({
+                    "kode_limbah": kode,
+                    "jenis_limbah": data_limbah['jenis']
+                })
                 num = len(state['data']['items_limbah'])
-                state['data']['current_item'] = {}
+                state['step'] = 'mou_tambah_item'
                 conversations[sid] = state
 
                 out_text = (
@@ -883,18 +892,19 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        # Step MoU: manual jenis
+        # MoU: manual jenis
         if state.get('step') == 'mou_manual_jenis_limbah':
-            state['data']['current_item']['jenis_limbah'] = text.strip()
-            state['step'] = 'mou_tambah_item'
-            state['data']['items_limbah'].append(state['data']['current_item'])
+            state['data']['items_limbah'].append({
+                "kode_limbah": "NON B3",
+                "jenis_limbah": text.strip()
+            })
             num = len(state['data']['items_limbah'])
-            state['data']['current_item'] = {}
+            state['step'] = 'mou_tambah_item'
             conversations[sid] = state
 
             out_text = (
                 f"✅ Item #{num} tersimpan!<br>"
-                f"• Jenis (manual): <b>{state['data']['items_limbah'][-1]['jenis_limbah']}</b><br>"
+                f"• Jenis (manual): <b>{text.strip()}</b><br>"
                 f"• Kode: <b>NON B3</b><br><br>"
                 "❓ <b>Tambah item lagi?</b> (ya/tidak)"
             )
@@ -905,7 +915,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        # Step MoU: tambah item atau generate
+        # MoU: tambah item / selesai items
         if state.get('step') == 'mou_tambah_item':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
@@ -916,12 +926,11 @@ def chat():
             if ('ya' in lower) or ('iya' in lower):
                 num = len(state['data']['items_limbah'])
                 state['step'] = 'mou_jenis_kode_limbah'
-                state['data']['current_item'] = {}
                 conversations[sid] = state
 
                 out_text = (
                     f"📦 <b>Item #{num+1}</b><br>"
-                    "❓ <b>7. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
+                    "❓ <b>3. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
                     "<i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau ketik <b>NON B3</b> untuk manual)</i>"
                 )
 
@@ -932,80 +941,154 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if ('tidak' in lower) or ('skip' in lower) or ('lewat' in lower) or ('gak' in lower) or ('nggak' in lower):
-                # Generate MoU
-                nama_pt_raw = state['data'].get('pihak_pertama', '').strip()
-                safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
-                safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
-
-                base_fname = f"MoU - {safe_pt}" if safe_pt else "MoU - Perusahaan"
-                fname_base = make_unique_filename_base(base_fname)
-
-                if not state['data'].get("nomor_surat"):
-                    state['data']['nomor_surat'] = build_mou_nomor_surat(state['data'])
-
-                docx = create_mou_docx(state['data'], fname_base)
-                pdf = create_pdf(fname_base)
-
-                conversations[sid] = {'step': 'idle', 'data': {}}
-
-                files = [{"type": "docx", "filename": docx, "url": f"/static/files/{docx}"}]
-                if pdf:
-                    files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
-
-                history_title = f"MoU {nama_pt_raw}" if nama_pt_raw else "MoU"
-                history_task_type = "mou"
-
-                if history_id_in:
-                    from utils import db_connect
-                    conn = db_connect()
-                    cur = conn.cursor()
-                    cur.execute("""
-                        UPDATE chat_history
-                        SET title = ?, task_type = ?, data_json = ?, files_json = ?
-                        WHERE id = ?
-                    """, (
-                        history_title,
-                        history_task_type,
-                        json.dumps(state['data'], ensure_ascii=False),
-                        json.dumps(files, ensure_ascii=False),
-                        int(history_id_in),
-                    ))
-                    conn.commit()
-                    conn.close()
-                    history_id = int(history_id_in)
-                else:
-                    history_id = db_insert_history(
-                        title=history_title,
-                        task_type=history_task_type,
-                        data=state['data'],
-                        files=files,
-                        messages=[],
-                        state={}
-                    )
+                # ✅ sesuai request: pertanyaan TTD dibuat TERAKHIR, setelah item limbah selesai
+                state['step'] = 'mou_ttd_p1_nama'
+                conversations[sid] = state
 
                 out_text = (
-                    "🎉 <b>MoU berhasil dibuat!</b><br><br>"
-                    f"✅ Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
-                    f"✅ PIHAK PERTAMA: <b>{state['data'].get('pihak_pertama')}</b><br>"
-                    f"✅ PIHAK KEDUA: <b>{state['data'].get('pihak_kedua')}</b><br>"
-                    f"✅ PIHAK KETIGA: <b>{state['data'].get('pihak_ketiga')}</b><br>"
-                    f"✅ TTD PIHAK PERTAMA: <b>{state['data'].get('ttd_pihak_pertama_nama')}</b> - {state['data'].get('ttd_pihak_pertama_jabatan')}<br>"
-                    f"✅ TTD PIHAK KETIGA: <b>{state['data'].get('ttd_pihak_ketiga_nama')}</b> - {state['data'].get('ttd_pihak_ketiga_jabatan')}<br>"
-                    f"✅ Total Limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
+                    "✅ Data limbah selesai.<br><br>"
+                    "✍️ <b>Terakhir, Nama Penandatangan PIHAK PERTAMA?</b><br>"
+                    "<i>(contoh: Joko Santoso)</i>"
                 )
 
-                db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
 
-                return jsonify({
-                    "text": out_text,
-                    "files": files,
-                    "history_id": history_id
-                })
+                return jsonify({"text": out_text, "history_id": history_id_in})
 
             out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             return jsonify({"text": out_text, "history_id": history_id_in})
+
+        # MoU: TTD PIHAK 1 nama
+        if state.get('step') == 'mou_ttd_p1_nama':
+            state['data']['ttd_pihak_pertama_nama'] = text.strip()
+            state['step'] = 'mou_ttd_p1_jabatan'
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ TTD PIHAK PERTAMA: <b>{text.strip()}</b><br><br>"
+                "✍️ <b>Jabatan Penandatangan PIHAK PERTAMA?</b><br>"
+                "<i>(contoh: Direktur Utama / Direktur / Manager)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        # MoU: TTD PIHAK 1 jabatan
+        if state.get('step') == 'mou_ttd_p1_jabatan':
+            state['data']['ttd_pihak_pertama_jabatan'] = text.strip()
+            state['step'] = 'mou_ttd_p3_nama'
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ Jabatan PIHAK PERTAMA: <b>{text.strip()}</b><br><br>"
+                "✍️ <b>Nama Penandatangan PIHAK KETIGA?</b><br>"
+                "<i>(contoh: Andi Wijaya)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        # MoU: TTD PIHAK 3 nama
+        if state.get('step') == 'mou_ttd_p3_nama':
+            state['data']['ttd_pihak_ketiga_nama'] = text.strip()
+            state['step'] = 'mou_ttd_p3_jabatan'
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ TTD PIHAK KETIGA: <b>{text.strip()}</b><br><br>"
+                "✍️ <b>Jabatan Penandatangan PIHAK KETIGA?</b><br>"
+                "<i>(contoh: General Manager / Direktur / Manager)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        # MoU: TTD PIHAK 3 jabatan -> GENERATE
+        if state.get('step') == 'mou_ttd_p3_jabatan':
+            state['data']['ttd_pihak_ketiga_jabatan'] = text.strip()
+
+            # pastikan nomor surat ada
+            if not state['data'].get("nomor_surat"):
+                state['data']['nomor_surat'] = build_mou_nomor_surat(state['data'])
+
+            # nama file: "MoU - Nama Perusahaan"
+            nama_pt_raw = (state['data'].get('pihak_pertama') or '').strip()
+            safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
+            safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
+
+            base_fname = f"MoU - {safe_pt}" if safe_pt else "MoU - Perusahaan"
+            fname_base = make_unique_filename_base(base_fname)
+
+            # generate
+            docx = create_mou_docx(state['data'], fname_base)
+            pdf = create_pdf(fname_base)
+
+            conversations[sid] = {'step': 'idle', 'data': {}}
+
+            files = [{"type": "docx", "filename": docx, "url": f"/static/files/{docx}"}]
+            if pdf:
+                files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
+
+            history_title = f"MoU {nama_pt_raw}" if nama_pt_raw else "MoU"
+            history_task_type = "mou"
+
+            if history_id_in:
+                from utils import db_connect
+                conn = db_connect()
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE chat_history
+                    SET title = ?, task_type = ?, data_json = ?, files_json = ?
+                    WHERE id = ?
+                """, (
+                    history_title,
+                    history_task_type,
+                    json.dumps(state['data'], ensure_ascii=False),
+                    json.dumps(files, ensure_ascii=False),
+                    int(history_id_in),
+                ))
+                conn.commit()
+                conn.close()
+                history_id = int(history_id_in)
+            else:
+                history_id = db_insert_history(
+                    title=history_title,
+                    task_type=history_task_type,
+                    data=state['data'],
+                    files=files,
+                    messages=[],
+                    state={}
+                )
+
+            out_text = (
+                "🎉 <b>MoU berhasil dibuat!</b><br><br>"
+                f"✅ Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
+                f"✅ PIHAK PERTAMA: <b>{state['data'].get('pihak_pertama')}</b><br>"
+                f"✅ PIHAK KEDUA: <b>{state['data'].get('pihak_kedua')}</b><br>"
+                f"✅ PIHAK KETIGA: <b>{state['data'].get('pihak_ketiga')}</b><br>"
+                f"✅ Total Limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
+            )
+
+            db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+
+            return jsonify({
+                "text": out_text,
+                "files": files,
+                "history_id": history_id
+            })
 
         # ============================================================
         # ✅ FITUR QUOTATION (EXISTING) - MINOR FIX:
@@ -1043,9 +1126,9 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_created or history_id_in})
 
-        # ======= FLOW QUOTATION EXISTING (kode Anda tetap) =======
+        # ======= FLOW QUOTATION (kode kamu, hanya angka pakai parse_amount_id, dan filename Quotation - Nama PT) =======
 
-        if state['step'] == 'nama_perusahaan':
+        if state.get('step') == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
 
             alamat = search_company_address(text).strip()
@@ -1071,7 +1154,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'jenis_kode_limbah':
+        elif state.get('step') == 'jenis_kode_limbah':
             if is_non_b3_input(text):
                 state['data']['current_item']['kode_limbah'] = "NON B3"
                 state['data']['current_item']['jenis_limbah'] = ""
@@ -1137,7 +1220,7 @@ def chat():
 
                     return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'manual_jenis_limbah':
+        elif state.get('step') == 'manual_jenis_limbah':
             state['data']['current_item']['jenis_limbah'] = text
             state['step'] = 'manual_satuan'
             conversations[sid] = state
@@ -1154,7 +1237,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'manual_satuan':
+        elif state.get('step') == 'manual_satuan':
             state['data']['current_item']['satuan'] = text
             state['step'] = 'harga'
             conversations[sid] = state
@@ -1170,7 +1253,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'harga':
+        elif state.get('step') == 'harga':
             harga_converted = parse_amount_id(text)
             state['data']['current_item']['harga'] = harga_converted
 
@@ -1188,13 +1271,11 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'tambah_item':
+        elif state.get('step') == 'tambah_item':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
-
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if 'ya' in lower or 'iya' in lower:
@@ -1209,6 +1290,7 @@ def chat():
                     db_update_state(int(history_id_in), state)
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
+
             elif 'tidak' in lower or 'skip' in lower or 'lewat' in lower or 'gak' in lower or 'nggak' in lower:
                 state['step'] = 'harga_transportasi'
                 conversations[sid] = state
@@ -1219,15 +1301,14 @@ def chat():
                     db_update_state(int(history_id_in), state)
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
+
             else:
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
-
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'harga_transportasi':
+        elif state.get('step') == 'harga_transportasi':
             transportasi_converted = parse_amount_id(text)
             state['data']['harga_transportasi'] = transportasi_converted
             state['step'] = 'tanya_mou'
@@ -1241,13 +1322,11 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'tanya_mou':
+        elif state.get('step') == 'tanya_mou':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
-
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if 'ya' in lower or 'iya' in lower:
@@ -1260,6 +1339,7 @@ def chat():
                     db_update_state(int(history_id_in), state)
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
+
             elif 'tidak' in lower or 'skip' in lower or 'lewat' in lower or 'gak' in lower or 'nggak' in lower:
                 state['data']['harga_mou'] = None
                 state['step'] = 'tanya_termin'
@@ -1271,15 +1351,14 @@ def chat():
                     db_update_state(int(history_id_in), state)
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
+
             else:
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
-
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'harga_mou':
+        elif state.get('step') == 'harga_mou':
             mou_converted = parse_amount_id(text)
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
@@ -1294,7 +1373,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'tanya_termin':
+        elif state.get('step') == 'tanya_termin':
             if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
                 state['data']['termin_hari'] = '14'
             else:
@@ -1358,6 +1437,7 @@ def chat():
                 "history_id": history_id
             })
 
+        # fallback AI
         ai_out = call_ai(text)
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", ai_out, files=[])
