@@ -7,6 +7,13 @@ from datetime import datetime
 import platform
 
 from docx import Document
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 from config_new import *
 from limbah_database import (
@@ -93,7 +100,7 @@ def parse_amount_id(text: str) -> int:
     }
     scale = None
     for k, m in scale_map.items():
-        if k in lower:
+        if re.search(rf'\b{k}\b', lower):
             scale = m
             break
 
@@ -103,12 +110,10 @@ def parse_amount_id(text: str) -> int:
         right_part = parts[1].strip() if len(parts) > 1 else ""
 
         left_tokens = re.findall(r'[a-zA-Z0-9]+', left_part)
-        left_tok = left_tokens[-1] if left_tokens else ""
-        left_digit = token_to_digit(left_tok)
-
         right_tokens = re.findall(r'[a-zA-Z0-9]+', right_part)
-        right_tok = right_tokens[0] if right_tokens else ""
-        right_digit = token_to_digit(right_tok)
+
+        left_digit = token_to_digit(left_tokens[-1]) if left_tokens else None
+        right_digit = token_to_digit(right_tokens[0]) if right_tokens else None
 
         if left_digit is not None and right_digit is not None:
             val = float(f"{left_digit}.{right_digit}")
@@ -135,6 +140,18 @@ def parse_amount_id(text: str) -> int:
         return int(digits) if digits else 0
 
 
+def parse_qty_id(text: str) -> float:
+    if not text:
+        return 0.0
+    t = normalize_id_number_text(text)
+    v = convert_voice_to_number(t)
+    try:
+        return float(v)
+    except:
+        m = re.findall(r'\d+(?:\.\d+)?', t)
+        return float(m[0]) if m else 0.0
+
+
 def make_unique_filename_base(base_name: str) -> str:
     base_name = (base_name or "").strip()
     if not base_name:
@@ -149,6 +166,7 @@ def make_unique_filename_base(base_name: str) -> str:
         return (
             os.path.exists(os.path.join(folder, f"{name}.docx")) or
             os.path.exists(os.path.join(folder, f"{name}.pdf")) or
+            os.path.exists(os.path.join(folder, f"{name}.xlsx")) or
             os.path.exists(os.path.join(folder, name))
         )
 
@@ -194,6 +212,41 @@ def get_next_mou_no_depan() -> str:
     n = load_mou_counter() + 1
     save_mou_counter(n)
     return str(n).zfill(3)
+
+
+def _invoice_counter_path() -> str:
+    try:
+        folder = str(FILES_DIR)
+    except Exception:
+        folder = "static/files"
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, "invoice_counter.json")
+
+
+def load_invoice_counter() -> int:
+    path = _invoice_counter_path()
+    try:
+        if not os.path.exists(path):
+            return 0
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f) or {}
+        return int(data.get("counter", 0))
+    except:
+        return 0
+
+
+def save_invoice_counter(n: int) -> None:
+    path = _invoice_counter_path()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"counter": int(n)}, f)
+
+
+def get_next_invoice_no() -> str:
+    now = datetime.now()
+    prefix = now.strftime("%y%m")
+    n = load_invoice_counter() + 1
+    save_invoice_counter(n)
+    return f"{prefix}{str(n).zfill(3)}"
 
 
 def month_to_roman(m: int) -> str:
@@ -255,36 +308,69 @@ def format_tanggal_indonesia(dt: datetime) -> str:
     return f"{hari}, tanggal {dt.day} {bulan} {dt.year}"
 
 
-def replace_in_paragraph(paragraph, old: str, new: str):
-    if not old:
-        return
+def set_run_font(run, font_name="Times New Roman", size=10, bold=None):
+    run.font.name = font_name
+    run._element.rPr.rFonts.set(qn('w:ascii'), font_name)
+    run._element.rPr.rFonts.set(qn('w:hAnsi'), font_name)
+    run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+    run._element.rPr.rFonts.set(qn('w:cs'), font_name)
+    run.font.size = Pt(size)
+    if bold is not None:
+        run.bold = bold
+
+
+def replace_in_runs_keep_format(paragraph, old: str, new: str):
+    if not old or not paragraph.text:
+        return False
     if old not in paragraph.text:
-        return
+        return False
+    changed = False
     for run in paragraph.runs:
         if old in run.text:
             run.text = run.text.replace(old, new)
+            changed = True
+    return changed
 
 
-def replace_regex_in_paragraph(paragraph, pattern: str, repl: str):
-    if not paragraph.text:
+def replace_in_cell_keep_format(cell, old: str, new: str):
+    changed = False
+    for p in cell.paragraphs:
+        if replace_in_runs_keep_format(p, old, new):
+            changed = True
+    return changed
+
+
+def replace_everywhere_keep_format(doc, old_list, new_value):
+    if not new_value:
         return
-    if not re.search(pattern, paragraph.text, flags=re.IGNORECASE):
-        return
-    full = paragraph.text
-    full2 = re.sub(pattern, repl, full, flags=re.IGNORECASE)
-    if full2 != full:
-        for run in paragraph.runs:
-            run.text = ""
-        if paragraph.runs:
-            paragraph.runs[0].text = full2
-        else:
-            paragraph.add_run(full2)
+    for p in doc.paragraphs:
+        for old in old_list:
+            replace_in_runs_keep_format(p, old, new_value)
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                for old in old_list:
+                    replace_in_cell_keep_format(cell, old, new_value)
+
+
+def style_cell_paragraph(cell, align="left", left_indent_pt=0, font="Times New Roman", size=10):
+    if not cell.paragraphs:
+        cell.add_paragraph("")
+    p = cell.paragraphs[0]
+    if align == "center":
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    else:
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    if left_indent_pt and align == "left":
+        p.paragraph_format.left_indent = Pt(left_indent_pt)
+    for r in p.runs:
+        set_run_font(r, font, size)
 
 
 def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     template_path = "tamplate MoU.docx"
     if not os.path.exists(template_path):
-        raise Exception("Template MoU tidak ditemukan. Pastikan ada di root: 'tamplate MoU.docx'")
+        raise Exception("Template MoU tidak ditemukan. Pastikan file 'tamplate MoU.docx' ada di root project.")
 
     doc = Document(template_path)
 
@@ -292,7 +378,15 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     pihak2 = (mou_data.get("pihak_kedua") or "").strip()
     pihak3 = (mou_data.get("pihak_ketiga") or "").strip()
 
-    nomor_full = (mou_data.get("nomor_surat") or mou_data.get("nomor_depan") or "").strip()
+    alamat1 = (mou_data.get("alamat_pihak_pertama") or "").strip()
+    alamat3 = (mou_data.get("alamat_pihak_ketiga") or "").strip()
+
+    ttd1 = (mou_data.get("ttd_pihak_pertama") or "").strip()
+    jab1 = (mou_data.get("jabatan_pihak_pertama") or "").strip()
+    ttd3 = (mou_data.get("ttd_pihak_ketiga") or "").strip()
+    jab3 = (mou_data.get("jabatan_pihak_ketiga") or "").strip()
+
+    nomor_full = (mou_data.get("nomor_surat") or "").strip()
     tanggal_text = format_tanggal_indonesia(datetime.now())
 
     contoh_pihak1_candidates = [
@@ -304,60 +398,88 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     contoh_pihak2_candidates = [
         "PT. SARANA TRANS BERSAMA JAYA",
         "PT Sarana Trans Bersama Jaya",
-        "PT STBJ",
+        "PT SARANA TRANS BERSAMA JAYA",
+        "PT Sarana Trans Bersama Jaya",
     ]
     contoh_pihak3_candidates = [
         "PT. HARAPAN BARU SEJAHTERA PLASTIK",
         "PT Harapan Baru Sejahtera Plastik",
-        "PT. HBSP",
-        "PT HBSP",
+        "PT HARAPAN BARU SEJAHTERA PLASTIK",
+        "PT Harapan Baru Sejahtera Plastik",
     ]
 
-    def replace_everywhere(old_list, new_value):
-        if not new_value:
-            return
-        for p in doc.paragraphs:
-            for old in old_list:
-                replace_in_paragraph(p, old, new_value)
-        for t in doc.tables:
-            for row in t.rows:
-                for cell in row.cells:
-                    for p in cell.paragraphs:
-                        for old in old_list:
-                            replace_in_paragraph(p, old, new_value)
+    replace_everywhere_keep_format(doc, contoh_pihak1_candidates, pihak1)
+    replace_everywhere_keep_format(doc, contoh_pihak2_candidates, pihak2)
+    replace_everywhere_keep_format(doc, contoh_pihak3_candidates, pihak3)
 
-    replace_everywhere(contoh_pihak1_candidates, pihak1)
-    replace_everywhere(contoh_pihak2_candidates, pihak2)
-    replace_everywhere(contoh_pihak3_candidates, pihak3)
+    def replace_no_line(container_paragraphs):
+        for p in container_paragraphs:
+            if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
+                for run in p.runs:
+                    if re.search(r'\bNo\s*:', run.text, flags=re.IGNORECASE):
+                        run.text = re.sub(r'\bNo\s*:\s*.*', f"No : {nomor_full}", run.text, flags=re.IGNORECASE)
+                        return True
+                replace_in_runs_keep_format(p, p.text, f"No : {nomor_full}")
+                return True
+        return False
 
-    for p in doc.paragraphs:
-        if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
-            replace_regex_in_paragraph(p, r'\bNo\s*:\s*.*', f"No : {nomor_full}")
-            break
+    replace_no_line(doc.paragraphs)
     for t in doc.tables:
         for row in t.rows:
             for cell in row.cells:
-                for p in cell.paragraphs:
-                    if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
-                        replace_regex_in_paragraph(p, r'\bNo\s*:\s*.*', f"No : {nomor_full}")
-                        break
+                if replace_no_line(cell.paragraphs):
+                    break
 
-    for p in doc.paragraphs:
-        if re.search(r'Pada hari ini', p.text, flags=re.IGNORECASE) and re.search(r'tanggal', p.text, flags=re.IGNORECASE):
-            replace_regex_in_paragraph(p, r'Pada hari ini.*', f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :")
-            break
+    kalimat_tanggal = f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :"
+    def replace_pada_hari_ini(container_paragraphs):
+        for p in container_paragraphs:
+            if "Pada hari ini" in p.text and "bertanda tangan" in p.text:
+                if p.runs:
+                    p.runs[0].text = kalimat_tanggal
+                    for r in p.runs[1:]:
+                        r.text = ""
+                else:
+                    p.add_run(kalimat_tanggal)
+                return True
+        return False
+
+    replace_pada_hari_ini(doc.paragraphs)
     for t in doc.tables:
         for row in t.rows:
             for cell in row.cells:
-                for p in cell.paragraphs:
-                    if re.search(r'Pada hari ini', p.text, flags=re.IGNORECASE) and re.search(r'tanggal', p.text, flags=re.IGNORECASE):
-                        replace_regex_in_paragraph(p, r'Pada hari ini.*', f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :")
-                        break
+                if replace_pada_hari_ini(cell.paragraphs):
+                    break
+
+    if ttd1:
+        replace_everywhere_keep_format(doc, ["Huang Feifang"], ttd1)
+    if jab1:
+        replace_everywhere_keep_format(doc, ["Direktur Utama"], jab1)
+
+    contoh_alamat_p1_candidates = [
+        "Jl. Raya Serang KM. 22 No. 30, Desa Pasir Bolang, Kec Tigaraksa, Tangerang Banten",
+        "Jl. Raya Serang KM. 22 No. 30, Desa Pasir Bolang, Kec. Tigaraksa, Tangerang Banten",
+    ]
+    if alamat1:
+        replace_everywhere_keep_format(doc, contoh_alamat_p1_candidates, alamat1)
+
+    if ttd3:
+        replace_everywhere_keep_format(doc, ["Yogi Aditya", "Yogi Permana", "Yogi"], ttd3)
+    if jab3:
+        replace_everywhere_keep_format(doc, ["Direktur", "Direktur Utama"], jab3)
+
+    contoh_alamat_p3_candidates = [
+        "Jl. Karawang – Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi – Jawa Barat",
+        "Jl. Karawang - Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi - Jawa Barat",
+    ]
+    if alamat3:
+        replace_everywhere_keep_format(doc, contoh_alamat_p3_candidates, alamat3)
 
     items = mou_data.get("items_limbah") or []
     target_table = None
     for t in doc.tables:
-        header_text = " ".join([c.text.strip() for c in t.rows[0].cells]) if t.rows else ""
+        if not t.rows:
+            continue
+        header_text = " ".join([c.text.strip() for c in t.rows[0].cells])
         if ("Jenis Limbah" in header_text) and ("Kode Limbah" in header_text):
             target_table = t
             break
@@ -369,12 +491,18 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
         for i, it in enumerate(items, start=1):
             row = target_table.add_row()
             cells = row.cells
+
             if len(cells) >= 1:
                 cells[0].text = str(i)
+                style_cell_paragraph(cells[0], align="center", font="Times New Roman", size=10)
+
             if len(cells) >= 2:
                 cells[1].text = (it.get("jenis_limbah") or "").strip()
+                style_cell_paragraph(cells[1], align="left", left_indent_pt=6, font="Times New Roman", size=10)
+
             if len(cells) >= 3:
                 cells[2].text = (it.get("kode_limbah") or "").strip()
+                style_cell_paragraph(cells[2], align="center", font="Times New Roman", size=10)
 
     try:
         folder = str(FILES_DIR)
@@ -384,8 +512,268 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
 
     out_path = os.path.join(folder, f"{fname_base}.docx")
     doc.save(out_path)
-
     return f"{fname_base}.docx"
+
+
+def _thin_border():
+    side = Side(style="thin", color="000000")
+    return Border(left=side, right=side, top=side, bottom=side)
+
+
+def _set_border(ws, r1, c1, r2, c2, border):
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            ws.cell(r, c).border = border
+
+
+def _money_format_cell(cell):
+    cell.number_format = '#,##0'
+
+
+def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Invoice"
+
+    col_widths = {
+        "A": 8,
+        "B": 6,
+        "C": 12,
+        "D": 45,
+        "E": 14,
+        "F": 16,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    border = _thin_border()
+    bold = Font(bold=True)
+    normal_font = Font(name="Calibri", size=11)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center", wrap_text=True)
+
+    payment = inv.get("payment") or {}
+    payment_defaults = {
+        "beneficiary": "PT. Sarana Trans Bersama Jaya",
+        "bank_name": "BCA",
+        "branch": "Cibadak - Sukabumi",
+        "idr_acct": "35212 26666",
+    }
+    for k, v in payment_defaults.items():
+        if not payment.get(k):
+            payment[k] = v
+
+    invoice_no = inv.get("invoice_no") or get_next_invoice_no()
+    inv_date = inv.get("invoice_date") or datetime.now().strftime("%d-%b-%y")
+
+    bill_to = inv.get("bill_to") or {}
+    ship_to = inv.get("ship_to") or {}
+    attn = inv.get("attn") or "Accounting / Finance"
+    phone = inv.get("phone") or ""
+    fax = inv.get("fax") or ""
+
+    ws["A1"].value = "Bill To:"
+    ws["A1"].font = bold
+    ws.merge_cells("A1:C1")
+
+    ws["D1"].value = "Ship To:"
+    ws["D1"].font = bold
+    ws.merge_cells("D1:F1")
+
+    bill_lines = [
+        (bill_to.get("name") or "").strip(),
+        (bill_to.get("address") or "").strip(),
+        (bill_to.get("address2") or "").strip(),
+    ]
+    ship_lines = [
+        (ship_to.get("name") or "").strip(),
+        (ship_to.get("address") or "").strip(),
+        (ship_to.get("address2") or "").strip(),
+    ]
+    bill_text = "\n".join([x for x in bill_lines if x])
+    ship_text = "\n".join([x for x in ship_lines if x])
+
+    ws["A2"].value = bill_text
+    ws.merge_cells("A2:C3")
+    ws["A2"].alignment = left
+
+    ws["D2"].value = ship_text
+    ws.merge_cells("D2:F3")
+    ws["D2"].alignment = left
+
+    ws["A4"].value = "Phone:"
+    ws["A4"].font = bold
+    ws.merge_cells("A4:B4")
+    ws["C4"].value = phone
+    ws["C4"].alignment = left
+
+    ws["D4"].value = "Fax:"
+    ws["D4"].font = bold
+    ws.merge_cells("D4:E4")
+    ws["F4"].value = fax
+    ws["F4"].alignment = left
+
+    ws["A5"].value = "Attn :"
+    ws["A5"].font = bold
+    ws.merge_cells("A5:B5")
+    ws["C5"].value = attn
+    ws.merge_cells("C5:F5")
+    ws["C5"].alignment = left
+
+    ws["E6"].value = "Invoice"
+    ws["E6"].font = bold
+    ws["E6"].alignment = center
+    ws["F6"].value = invoice_no
+    ws["F6"].alignment = center
+
+    ws["E7"].value = "Date"
+    ws["E7"].font = bold
+    ws["E7"].alignment = center
+    ws["F7"].value = inv_date
+    ws["F7"].alignment = center
+
+    start_row = 9
+    ws["A8"].value = ""
+    ws["A9"].value = "Qty"
+    ws["B9"].value = ""
+    ws["C9"].value = "Date"
+    ws["D9"].value = "Description"
+    ws["E9"].value = "Price"
+    ws["F9"].value = "Amount (IDR)"
+    for c in "ABCDEF":
+        ws[f"{c}9"].font = bold
+        ws[f"{c}9"].alignment = center
+
+    items = inv.get("items") or []
+    r = start_row + 1
+
+    subtotal = 0
+    for it in items:
+        qty = float(it.get("qty") or 0)
+        unit = (it.get("unit") or "").strip()
+        desc = (it.get("description") or "").strip()
+        price = int(it.get("price") or 0)
+        line_date = it.get("date") or inv_date
+        amount = int(round(qty * price))
+        subtotal += amount
+
+        ws[f"A{r}"].value = qty if qty % 1 != 0 else int(qty)
+        ws[f"A{r}"].alignment = center
+
+        ws[f"B{r}"].value = unit
+        ws[f"B{r}"].alignment = center
+
+        ws[f"C{r}"].value = line_date
+        ws[f"C{r}"].alignment = center
+
+        ws[f"D{r}"].value = desc
+        ws[f"D{r}"].alignment = left
+
+        ws[f"E{r}"].value = price
+        ws[f"E{r}"].alignment = right
+        _money_format_cell(ws[f"E{r}"])
+
+        ws[f"F{r}"].value = amount
+        ws[f"F{r}"].alignment = right
+        _money_format_cell(ws[f"F{r}"])
+
+        r += 1
+
+    min_last_row = 18
+    if r < min_last_row:
+        r = min_last_row
+
+    _set_border(ws, 9, 1, r - 1, 6, border)
+
+    sum_row = r
+    ws[f"E{sum_row}"].value = "Total"
+    ws[f"E{sum_row}"].font = bold
+    ws[f"E{sum_row}"].alignment = right
+    ws[f"F{sum_row}"].value = subtotal
+    ws[f"F{sum_row}"].alignment = right
+    _money_format_cell(ws[f"F{sum_row}"])
+
+    freight = int(inv.get("freight") or 0)
+    ws[f"E{sum_row+1}"].value = "Freight"
+    ws[f"E{sum_row+1}"].alignment = right
+    ws[f"F{sum_row+1}"].value = freight
+    ws[f"F{sum_row+1}"].alignment = right
+    _money_format_cell(ws[f"F{sum_row+1}"])
+
+    total = subtotal + freight
+    ws[f"E{sum_row+2}"].value = "Total"
+    ws[f"E{sum_row+2}"].font = bold
+    ws[f"E{sum_row+2}"].alignment = right
+    ws[f"F{sum_row+2}"].value = total
+    ws[f"F{sum_row+2}"].alignment = right
+    _money_format_cell(ws[f"F{sum_row+2}"])
+
+    ppn_rate = float(inv.get("ppn_rate") or 0.11)
+    ppn = int(round(total * ppn_rate))
+    ws[f"E{sum_row+3}"].value = f"PPN {int(ppn_rate*100)}%"
+    ws[f"E{sum_row+3}"].alignment = right
+    ws[f"F{sum_row+3}"].value = ppn
+    ws[f"F{sum_row+3}"].alignment = right
+    _money_format_cell(ws[f"F{sum_row+3}"])
+
+    deposit = int(inv.get("deposit") or 0)
+    ws[f"E{sum_row+4}"].value = "Less: Deposit"
+    ws[f"E{sum_row+4}"].alignment = right
+    ws[f"F{sum_row+4}"].value = deposit
+    ws[f"F{sum_row+4}"].alignment = right
+    _money_format_cell(ws[f"F{sum_row+4}"])
+
+    balance = total + ppn - deposit
+    ws[f"E{sum_row+5}"].value = "Balance Due"
+    ws[f"E{sum_row+5}"].font = bold
+    ws[f"E{sum_row+5}"].alignment = right
+    ws[f"F{sum_row+5}"].value = balance
+    ws[f"F{sum_row+5}"].alignment = right
+    _money_format_cell(ws[f"F{sum_row+5}"])
+
+    _set_border(ws, sum_row, 5, sum_row + 5, 6, border)
+
+    pay_row = sum_row
+    ws[f"A{pay_row}"].value = "Please Transfer Full Amount to:"
+    ws[f"A{pay_row}"].font = bold
+    ws.merge_cells(f"A{pay_row}:D{pay_row}")
+
+    ws[f"A{pay_row+1}"].value = "Beneficiary :"
+    ws[f"B{pay_row+1}"].value = payment["beneficiary"]
+    ws.merge_cells(f"B{pay_row+1}:D{pay_row+1}")
+
+    ws[f"A{pay_row+2}"].value = "Bank Name :"
+    ws[f"B{pay_row+2}"].value = payment["bank_name"]
+    ws.merge_cells(f"B{pay_row+2}:D{pay_row+2}")
+
+    ws[f"A{pay_row+3}"].value = "Branch :"
+    ws[f"B{pay_row+3}"].value = payment["branch"]
+    ws.merge_cells(f"B{pay_row+3}:D{pay_row+3}")
+
+    ws[f"A{pay_row+4}"].value = "IDR Acct :"
+    ws[f"B{pay_row+4}"].value = payment["idr_acct"]
+    ws.merge_cells(f"B{pay_row+4}:D{pay_row+4}")
+
+    _set_border(ws, pay_row, 1, pay_row + 4, 4, border)
+
+    max_row = pay_row + 6
+    for row in ws.iter_rows(min_row=1, max_row=max_row, min_col=1, max_col=6):
+        for cell in row:
+            if cell.value is None:
+                continue
+            if cell.font is None or cell.font == Font():
+                cell.font = normal_font
+
+    try:
+        folder = str(FILES_DIR)
+    except Exception:
+        folder = "static/files"
+    os.makedirs(folder, exist_ok=True)
+
+    out_path = os.path.join(folder, f"{fname_base}.xlsx")
+    wb.save(out_path)
+    return f"{fname_base}.xlsx"
 
 
 @app.route("/")
@@ -514,7 +902,6 @@ def chat():
 
         state = conversations.get(sid, {'step': 'idle', 'data': {}})
         lower = text.lower()
-        task_type_req = (data.get("taskType") or "").strip().lower()
 
         if history_id_in:
             try:
@@ -523,8 +910,359 @@ def chat():
             except:
                 pass
 
-        if (state.get('step') == 'idle') and (task_type_req == 'mou' or ('mou' in lower)):
+        if (("invoice" in lower) or ("faktur" in lower)) and (state.get("step") == "idle"):
+            inv_no = get_next_invoice_no()
+
+            state["step"] = "inv_billto_name"
+            state["data"] = {
+                "invoice_no": inv_no,
+                "invoice_date": datetime.now().strftime("%d-%b-%y"),
+                "bill_to": {"name": "", "address": "", "address2": ""},
+                "ship_to": {"name": "", "address": "", "address2": ""},
+                "phone": "",
+                "fax": "",
+                "attn": "Accounting / Finance",
+                "items": [],
+                "current_item": {},
+                "freight": 0,
+                "ppn_rate": 0.11,
+                "deposit": 0,
+                "payment": {
+                    "beneficiary": "PT. Sarana Trans Bersama Jaya",
+                    "bank_name": "BCA",
+                    "branch": "Cibadak - Sukabumi",
+                    "idr_acct": "35212 26666",
+                }
+            }
+            conversations[sid] = state
+
+            out_text = (
+                "Baik, saya bantu buatkan <b>INVOICE (Excel)</b>.<br><br>"
+                f"✅ Invoice No: <b>{inv_no}</b><br>"
+                f"✅ Date: <b>{state['data']['invoice_date']}</b> (otomatis hari ini)<br><br>"
+                "❓ <b>1. Bill To - Nama Perusahaan?</b>"
+            )
+
+            history_id_created = None
+            if not history_id_in:
+                history_id_created = db_insert_history(
+                    title="Chat Baru",
+                    task_type=data.get("taskType") or "invoice",
+                    data={},
+                    files=[],
+                    messages=[
+                        {"id": uuid.uuid4().hex[:12], "sender": "user", "text": text, "files": [], "timestamp": datetime.now().isoformat()},
+                        {"id": uuid.uuid4().hex[:12], "sender": "assistant", "text": re.sub(r'<br\s*/?>', '\n', out_text), "files": [], "timestamp": datetime.now().isoformat()},
+                    ],
+                    state=state
+                )
+            else:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_created or history_id_in})
+
+        if state.get("step") == "inv_billto_name":
+            state["data"]["bill_to"]["name"] = text.strip()
+
+            alamat = search_company_address(text).strip()
+            if not alamat:
+                alamat = search_company_address_ai(text).strip()
+            if not alamat:
+                alamat = "Di Tempat"
+
+            state["data"]["bill_to"]["address"] = alamat
+            state["step"] = "inv_shipto_same"
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ Bill To: <b>{state['data']['bill_to']['name']}</b><br>"
+                f"✅ Alamat: <b>{alamat}</b><br><br>"
+                "❓ <b>2. Ship To sama dengan Bill To?</b> (ya/tidak)"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_shipto_same":
+            if ("ya" in lower) or ("iya" in lower):
+                state["data"]["ship_to"] = dict(state["data"]["bill_to"])
+                state["step"] = "inv_phone"
+                conversations[sid] = state
+
+                out_text = (
+                    f"✅ Ship To: <b>(sama)</b><br><br>"
+                    "❓ <b>3. Phone?</b> (boleh kosong, ketik '-' jika tidak ada)"
+                )
+            elif ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower):
+                state["step"] = "inv_shipto_name"
+                conversations[sid] = state
+                out_text = "❓ <b>2A. Ship To - Nama Perusahaan?</b>"
+            else:
+                out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>2. Ship To sama dengan Bill To?</b>"
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_shipto_name":
+            state["data"]["ship_to"]["name"] = text.strip()
+
+            alamat = search_company_address(text).strip()
+            if not alamat:
+                alamat = search_company_address_ai(text).strip()
+            if not alamat:
+                alamat = "Di Tempat"
+            state["data"]["ship_to"]["address"] = alamat
+
+            state["step"] = "inv_phone"
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ Ship To: <b>{state['data']['ship_to']['name']}</b><br>"
+                f"✅ Alamat: <b>{alamat}</b><br><br>"
+                "❓ <b>3. Phone?</b> (boleh kosong, ketik '-' jika tidak ada)"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_phone":
+            state["data"]["phone"] = "" if text.strip() in ("-", "") else text.strip()
+            state["step"] = "inv_fax"
+            conversations[sid] = state
+            out_text = "❓ <b>4. Fax?</b> (boleh kosong, ketik '-' jika tidak ada)"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_fax":
+            state["data"]["fax"] = "" if text.strip() in ("-", "") else text.strip()
+            state["step"] = "inv_attn"
+            conversations[sid] = state
+            out_text = "❓ <b>5. Attn?</b> (default: Accounting / Finance | ketik '-' untuk default)"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_attn":
+            if text.strip() not in ("-", ""):
+                state["data"]["attn"] = text.strip()
+            state["step"] = "inv_item_qty"
+            state["data"]["current_item"] = {}
+            conversations[sid] = state
+            out_text = (
+                "✅ Header invoice selesai.<br><br>"
+                "📦 <b>Item #1</b><br>"
+                "❓ <b>6. Qty?</b> (contoh: 749 atau 3,5)"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_item_qty":
+            qty = parse_qty_id(text)
+            state["data"]["current_item"]["qty"] = qty
+            state["step"] = "inv_item_unit"
+            conversations[sid] = state
+            out_text = "❓ <b>6A. Unit?</b> (contoh: Kg / Liter / Pcs)"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_item_unit":
+            state["data"]["current_item"]["unit"] = text.strip()
+            state["data"]["current_item"]["date"] = state["data"]["invoice_date"]
+            state["step"] = "inv_item_desc"
+            conversations[sid] = state
+            out_text = (
+                "❓ <b>6B. Jenis Limbah / Kode Limbah?</b><br>"
+                "<i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau ketik <b>NON B3</b> untuk manual)</i>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_item_desc":
+            if is_non_b3_input(text):
+                state["data"]["current_item"]["description"] = ""
+                state["step"] = "inv_item_desc_manual"
+                conversations[sid] = state
+                out_text = "❓ <b>6C. Deskripsi (manual) apa?</b> (contoh: plastik bekas / fly ash / dll)"
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+                return jsonify({"text": out_text, "history_id": history_id_in})
+
+            kode, data_limbah = find_limbah_by_kode(text)
+            if not (kode and data_limbah):
+                kode, data_limbah = find_limbah_by_jenis(text)
+
+            if kode and data_limbah:
+                state["data"]["current_item"]["description"] = data_limbah["jenis"]
+                state["step"] = "inv_item_price"
+                conversations[sid] = state
+                out_text = f"✅ Deskripsi: <b>{data_limbah['jenis']}</b><br><br>❓ <b>6D. Price (Rp)?</b>"
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+                return jsonify({"text": out_text, "history_id": history_id_in})
+
+            out_text = (
+                f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan dalam database.<br><br>"
+                "Silakan coba lagi dengan:<br>"
+                "• Kode limbah (contoh: A102d, B105d)<br>"
+                "• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)<br>"
+                "• Atau ketik <b>NON B3</b> untuk input manual"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_item_desc_manual":
+            state["data"]["current_item"]["description"] = text.strip()
+            state["step"] = "inv_item_price"
+            conversations[sid] = state
+            out_text = "❓ <b>6D. Price (Rp)?</b>"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_item_price":
+            price = parse_amount_id(text)
+            state["data"]["current_item"]["price"] = price
+
+            state["data"]["items"].append(state["data"]["current_item"])
+            num = len(state["data"]["items"])
+            state["data"]["current_item"] = {}
+
+            state["step"] = "inv_add_more_item"
+            conversations[sid] = state
+
+            out_text = (
+                f"✅ Item #{num} tersimpan!<br>"
+                f"❓ <b>Tambah item lagi?</b> (ya/tidak)"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_add_more_item":
+            if ("ya" in lower) or ("iya" in lower):
+                num = len(state["data"]["items"])
+                state["step"] = "inv_item_qty"
+                state["data"]["current_item"] = {}
+                conversations[sid] = state
+                out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>6. Qty?</b> (contoh: 100 / 3,5)"
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+                return jsonify({"text": out_text, "history_id": history_id_in})
+
+            if ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower) or ("skip" in lower) or ("lewat" in lower):
+                state["step"] = "inv_freight"
+                conversations[sid] = state
+                out_text = "❓ <b>7. Freight (Rp)?</b> (ketik 0 jika tidak ada)"
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+                return jsonify({"text": out_text, "history_id": history_id_in})
+
+            out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_freight":
+            state["data"]["freight"] = parse_amount_id(text)
+            state["step"] = "inv_deposit"
+            conversations[sid] = state
+            out_text = "❓ <b>8. Deposit (Rp)?</b> (ketik 0 jika tidak ada)"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get("step") == "inv_deposit":
+            state["data"]["deposit"] = parse_amount_id(text)
+            state["step"] = "inv_generate"
+            conversations[sid] = state
+
+            nama_pt_raw = (state["data"].get("bill_to") or {}).get("name", "").strip()
+            safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
+            safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
+            base_fname = f"Invoice - {safe_pt}" if safe_pt else "Invoice"
+            fname_base = make_unique_filename_base(base_fname)
+
+            xlsx = create_invoice_xlsx(state["data"], fname_base)
+
+            conversations[sid] = {'step': 'idle', 'data': {}}
+
+            files = [{"type": "xlsx", "filename": xlsx, "url": f"/static/files/{xlsx}"}]
+
+            history_title = f"Invoice {nama_pt_raw}" if nama_pt_raw else "Invoice"
+            history_task_type = "invoice"
+
+            if history_id_in:
+                from utils import db_connect
+                conn = db_connect()
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE chat_history
+                    SET title = ?, task_type = ?, data_json = ?, files_json = ?
+                    WHERE id = ?
+                """, (
+                    history_title,
+                    history_task_type,
+                    json.dumps(state["data"], ensure_ascii=False),
+                    json.dumps(files, ensure_ascii=False),
+                    int(history_id_in),
+                ))
+                conn.commit()
+                conn.close()
+                history_id = int(history_id_in)
+            else:
+                history_id = db_insert_history(
+                    title=history_title,
+                    task_type=history_task_type,
+                    data=state["data"],
+                    files=files,
+                    messages=[],
+                    state={}
+                )
+
+            out_text = (
+                "🎉 <b>Invoice berhasil dibuat (Excel)!</b><br><br>"
+                f"✅ Invoice No: <b>{state['data'].get('invoice_no')}</b><br>"
+                f"✅ Bill To: <b>{(state['data'].get('bill_to') or {}).get('name','')}</b><br>"
+                f"✅ Total Item: <b>{len(state['data'].get('items') or [])}</b><br>"
+                "📎 Silakan download file Excel pada daftar dokumen."
+            )
+
+            db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+
+            return jsonify({
+                "text": out_text,
+                "files": files,
+                "history_id": history_id
+            })
+
+        if ('mou' in lower) and (state.get('step') == 'idle'):
             nomor_depan = get_next_mou_no_depan()
+
             state['step'] = 'mou_pihak_pertama'
             state['data'] = {
                 'nomor_depan': nomor_depan,
@@ -538,14 +1276,18 @@ def chat():
                 'pihak_ketiga': "",
                 'pihak_ketiga_kode': "",
                 'alamat_pihak_ketiga': "",
+                'ttd_pihak_pertama': "",
+                'jabatan_pihak_pertama': "",
+                'ttd_pihak_ketiga': "",
+                'jabatan_pihak_ketiga': "",
             }
             conversations[sid] = state
 
             out_text = (
                 "Baik, saya bantu buatkan <b>MoU Tripartit</b>.<br><br>"
                 f"✅ No Depan: <b>{nomor_depan}</b> (auto mulai 000)<br>"
-                "✅ Format nomor mengikuti template (otomatis).<br>"
-                "✅ Tanggal: <b>otomatis hari ini</b><br><br>"
+                "✅ Nomor lengkap otomatis mengikuti format template.<br>"
+                "✅ Tanggal otomatis hari ini.<br><br>"
                 "❓ <b>1. Nama Perusahaan (PIHAK PERTAMA / Penghasil Limbah)?</b>"
             )
 
@@ -576,8 +1318,8 @@ def chat():
                 alamat = search_company_address_ai(text).strip()
             if not alamat:
                 alamat = "Di Tempat"
-            state['data']['alamat_pihak_pertama'] = alamat
 
+            state['data']['alamat_pihak_pertama'] = alamat
             state['step'] = 'mou_pilih_pihak_ketiga'
             conversations[sid] = state
 
@@ -684,9 +1426,11 @@ def chat():
             if kode and data_limbah:
                 state['data']['current_item']['kode_limbah'] = kode
                 state['data']['current_item']['jenis_limbah'] = data_limbah['jenis']
-                state['step'] = 'mou_tambah_item'
+
                 state['data']['items_limbah'].append(state['data']['current_item'])
                 num = len(state['data']['items_limbah'])
+
+                state['step'] = 'mou_tambah_item'
                 state['data']['current_item'] = {}
                 conversations[sid] = state
 
@@ -719,9 +1463,10 @@ def chat():
 
         if state.get('step') == 'mou_manual_jenis_limbah':
             state['data']['current_item']['jenis_limbah'] = text.strip()
-            state['step'] = 'mou_tambah_item'
             state['data']['items_limbah'].append(state['data']['current_item'])
             num = len(state['data']['items_limbah'])
+
+            state['step'] = 'mou_tambah_item'
             state['data']['current_item'] = {}
             conversations[sid] = state
 
@@ -764,82 +1509,145 @@ def chat():
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if ('tidak' in lower) or ('skip' in lower) or ('lewat' in lower) or ('gak' in lower) or ('nggak' in lower):
-                nama_pt_raw = state['data'].get('pihak_pertama', '').strip()
-                safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
-                safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
-
-                base_fname = f"MoU - {safe_pt}" if safe_pt else "MoU - Perusahaan"
-                fname_base = make_unique_filename_base(base_fname)
-
-                if not state['data'].get("nomor_surat"):
-                    state['data']['nomor_surat'] = build_mou_nomor_surat(state['data'])
-
-                docx = create_mou_docx(state['data'], fname_base)
-                pdf = create_pdf(fname_base)
-
-                conversations[sid] = {'step': 'idle', 'data': {}}
-
-                files = [{"type": "docx", "filename": docx, "url": f"/static/files/{docx}"}]
-                if pdf:
-                    files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
-
-                history_title = f"MoU {nama_pt_raw}" if nama_pt_raw else "MoU"
-                history_task_type = "mou"
-
-                if history_id_in:
-                    from utils import db_connect
-                    conn = db_connect()
-                    cur = conn.cursor()
-                    cur.execute("""
-                        UPDATE chat_history
-                        SET title = ?, task_type = ?, data_json = ?, files_json = ?
-                        WHERE id = ?
-                    """, (
-                        history_title,
-                        history_task_type,
-                        json.dumps(state['data'], ensure_ascii=False),
-                        json.dumps(files, ensure_ascii=False),
-                        int(history_id_in),
-                    ))
-                    conn.commit()
-                    conn.close()
-                    history_id = int(history_id_in)
-                else:
-                    history_id = db_insert_history(
-                        title=history_title,
-                        task_type=history_task_type,
-                        data=state['data'],
-                        files=files,
-                        messages=[],
-                        state={}
-                    )
+                state['step'] = 'mou_ttd_pihak_pertama'
+                conversations[sid] = state
 
                 out_text = (
-                    "🎉 <b>MoU berhasil dibuat!</b><br><br>"
-                    f"✅ Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
-                    f"✅ PIHAK PERTAMA: <b>{state['data'].get('pihak_pertama')}</b><br>"
-                    f"✅ PIHAK KEDUA: <b>{state['data'].get('pihak_kedua')}</b><br>"
-                    f"✅ PIHAK KETIGA: <b>{state['data'].get('pihak_ketiga')}</b><br>"
-                    f"✅ Total Limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
+                    "✅ Data limbah selesai.<br><br>"
+                    "❓ <b>Terakhir, siapa nama penandatangan PIHAK PERTAMA?</b><br>"
+                    "<i>(Nama yang akan muncul di bagian tanda tangan bawah)</i>"
                 )
 
-                db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
 
-                return jsonify({
-                    "text": out_text,
-                    "files": files,
-                    "history_id": history_id
-                })
+                return jsonify({"text": out_text, "history_id": history_id_in})
 
             out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if (state.get('step') == 'idle') and (
-            task_type_req in ('quotation', 'penawaran') or
-            ('quotation' in lower) or ('penawaran' in lower)
-        ):
+        if state.get('step') == 'mou_ttd_pihak_pertama':
+            state['data']['ttd_pihak_pertama'] = text.strip()
+            state['step'] = 'mou_jabatan_pihak_pertama'
+            conversations[sid] = state
+
+            out_text = (
+                "❓ <b>Jabatan penandatangan PIHAK PERTAMA apa?</b><br>"
+                "<i>(Contoh: Direktur Utama / Direktur / Manager / dll)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get('step') == 'mou_jabatan_pihak_pertama':
+            state['data']['jabatan_pihak_pertama'] = text.strip()
+            state['step'] = 'mou_ttd_pihak_ketiga'
+            conversations[sid] = state
+
+            out_text = (
+                "❓ <b>Terakhir, siapa nama penandatangan PIHAK KETIGA?</b><br>"
+                "<i>(Nama yang akan muncul di bagian tanda tangan bawah)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get('step') == 'mou_ttd_pihak_ketiga':
+            state['data']['ttd_pihak_ketiga'] = text.strip()
+            state['step'] = 'mou_jabatan_pihak_ketiga'
+            conversations[sid] = state
+
+            out_text = (
+                "❓ <b>Jabatan penandatangan PIHAK KETIGA apa?</b><br>"
+                "<i>(Contoh: Direktur Utama / Direktur / Manager / dll)</i>"
+            )
+
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get('step') == 'mou_jabatan_pihak_ketiga':
+            state['data']['jabatan_pihak_ketiga'] = text.strip()
+
+            nama_pt_raw = state['data'].get('pihak_pertama', '').strip()
+            safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
+            safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
+
+            base_fname = f"MoU - {safe_pt}" if safe_pt else "MoU - Perusahaan"
+            fname_base = make_unique_filename_base(base_fname)
+
+            if not state['data'].get("nomor_surat"):
+                state['data']['nomor_surat'] = build_mou_nomor_surat(state['data'])
+
+            docx = create_mou_docx(state['data'], fname_base)
+            pdf = create_pdf(fname_base)
+
+            conversations[sid] = {'step': 'idle', 'data': {}}
+
+            files = [{"type": "docx", "filename": docx, "url": f"/static/files/{docx}"}]
+            if pdf:
+                files.append({"type": "pdf", "filename": pdf, "url": f"/static/files/{pdf}"})
+
+            history_title = f"MoU {nama_pt_raw}" if nama_pt_raw else "MoU"
+            history_task_type = "mou"
+
+            if history_id_in:
+                from utils import db_connect
+                conn = db_connect()
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE chat_history
+                    SET title = ?, task_type = ?, data_json = ?, files_json = ?
+                    WHERE id = ?
+                """, (
+                    history_title,
+                    history_task_type,
+                    json.dumps(state['data'], ensure_ascii=False),
+                    json.dumps(files, ensure_ascii=False),
+                    int(history_id_in),
+                ))
+                conn.commit()
+                conn.close()
+                history_id = int(history_id_in)
+            else:
+                history_id = db_insert_history(
+                    title=history_title,
+                    task_type=history_task_type,
+                    data=state['data'],
+                    files=files,
+                    messages=[],
+                    state={}
+                )
+
+            out_text = (
+                "🎉 <b>MoU berhasil dibuat!</b><br><br>"
+                f"✅ Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
+                f"✅ PIHAK PERTAMA: <b>{state['data'].get('pihak_pertama')}</b><br>"
+                f"✅ PIHAK KEDUA: <b>{state['data'].get('pihak_kedua')}</b><br>"
+                f"✅ PIHAK KETIGA: <b>{state['data'].get('pihak_ketiga')}</b><br>"
+                f"✅ Total Limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
+            )
+
+            db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+
+            return jsonify({
+                "text": out_text,
+                "files": files,
+                "history_id": history_id
+            })
+
+        if ('quotation' in lower or 'penawaran' in lower or ('buat' in lower and 'mou' not in lower)):
             nomor_depan = get_next_nomor()
             state['step'] = 'nama_perusahaan'
             now = datetime.now()
@@ -871,7 +1679,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_created or history_id_in})
 
-        if state['step'] == 'nama_perusahaan':
+        if state.get('step') == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
 
             alamat = search_company_address(text).strip()
@@ -897,7 +1705,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'jenis_kode_limbah':
+        if state.get('step') == 'jenis_kode_limbah':
             if is_non_b3_input(text):
                 state['data']['current_item']['kode_limbah'] = "NON B3"
                 state['data']['current_item']['jenis_limbah'] = ""
@@ -963,7 +1771,7 @@ def chat():
 
                     return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'manual_jenis_limbah':
+        if state.get('step') == 'manual_jenis_limbah':
             state['data']['current_item']['jenis_limbah'] = text
             state['step'] = 'manual_satuan'
             conversations[sid] = state
@@ -980,7 +1788,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'manual_satuan':
+        if state.get('step') == 'manual_satuan':
             state['data']['current_item']['satuan'] = text
             state['step'] = 'harga'
             conversations[sid] = state
@@ -996,7 +1804,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'harga':
+        if state.get('step') == 'harga':
             harga_converted = parse_amount_id(text)
             state['data']['current_item']['harga'] = harga_converted
 
@@ -1014,13 +1822,11 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'tambah_item':
+        if state.get('step') == 'tambah_item':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
-
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if 'ya' in lower or 'iya' in lower:
@@ -1053,7 +1859,7 @@ def chat():
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'harga_transportasi':
+        if state.get('step') == 'harga_transportasi':
             transportasi_converted = parse_amount_id(text)
             state['data']['harga_transportasi'] = transportasi_converted
             state['step'] = 'tanya_mou'
@@ -1067,13 +1873,11 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'tanya_mou':
+        if state.get('step') == 'tanya_mou':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
-
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if 'ya' in lower or 'iya' in lower:
@@ -1105,7 +1909,7 @@ def chat():
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'harga_mou':
+        if state.get('step') == 'harga_mou':
             mou_converted = parse_amount_id(text)
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
@@ -1120,7 +1924,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        elif state['step'] == 'tanya_termin':
+        if state.get('step') == 'tanya_termin':
             if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
                 state['data']['termin_hari'] = '14'
             else:
