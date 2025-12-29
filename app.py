@@ -15,6 +15,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+
 from config_new import *
 from limbah_database import (
     LIMBAH_B3_DB,
@@ -100,7 +103,7 @@ def parse_amount_id(text: str) -> int:
     }
     scale = None
     for k, m in scale_map.items():
-        if re.search(rf'\b{k}\b', lower):
+        if k in lower:
             scale = m
             break
 
@@ -110,10 +113,12 @@ def parse_amount_id(text: str) -> int:
         right_part = parts[1].strip() if len(parts) > 1 else ""
 
         left_tokens = re.findall(r'[a-zA-Z0-9]+', left_part)
-        right_tokens = re.findall(r'[a-zA-Z0-9]+', right_part)
+        left_tok = left_tokens[-1] if left_tokens else ""
+        left_digit = token_to_digit(left_tok)
 
-        left_digit = token_to_digit(left_tokens[-1]) if left_tokens else None
-        right_digit = token_to_digit(right_tokens[0]) if right_tokens else None
+        right_tokens = re.findall(r'[a-zA-Z0-9]+', right_part)
+        right_tok = right_tokens[0] if right_tokens else ""
+        right_digit = token_to_digit(right_tok)
 
         if left_digit is not None and right_digit is not None:
             val = float(f"{left_digit}.{right_digit}")
@@ -367,6 +372,28 @@ def style_cell_paragraph(cell, align="left", left_indent_pt=0, font="Times New R
         set_run_font(r, font, size)
 
 
+def _replace_name_title_near(doc, name_candidates, new_name, title_candidates, new_title):
+    def process_paragraph(p):
+        txt = p.text or ""
+        hit = False
+        for nm in name_candidates:
+            if nm and nm in txt:
+                replace_in_runs_keep_format(p, nm, new_name)
+                hit = True
+        if hit and new_title:
+            for tt in title_candidates:
+                if tt and tt in (p.text or ""):
+                    replace_in_runs_keep_format(p, tt, new_title)
+
+    for p in doc.paragraphs:
+        process_paragraph(p)
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    process_paragraph(p)
+
+
 def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     template_path = "tamplate MoU.docx"
     if not os.path.exists(template_path):
@@ -374,15 +401,23 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
 
     doc = Document(template_path)
 
-    pihak1 = (mou_data.get("pihak_pertama") or "").strip()
-    pihak2 = (mou_data.get("pihak_kedua") or "").strip()
-    pihak3 = (mou_data.get("pihak_ketiga") or "").strip()
+    pihak1_raw = (mou_data.get("pihak_pertama") or "").strip()
+    pihak2_raw = (mou_data.get("pihak_kedua") or "").strip()
+    pihak3_raw = (mou_data.get("pihak_ketiga") or "").strip()
+
+    pihak1 = pihak1_raw.upper()
+    pihak2 = pihak2_raw.upper()
+    pihak3 = pihak3_raw.upper()
 
     alamat1 = (mou_data.get("alamat_pihak_pertama") or "").strip()
     alamat3 = (mou_data.get("alamat_pihak_ketiga") or "").strip()
 
     ttd1 = (mou_data.get("ttd_pihak_pertama") or "").strip()
     jab1 = (mou_data.get("jabatan_pihak_pertama") or "").strip()
+
+    ttd2 = (mou_data.get("ttd_pihak_kedua") or "").strip()
+    jab2 = (mou_data.get("jabatan_pihak_kedua") or "").strip()
+
     ttd3 = (mou_data.get("ttd_pihak_ketiga") or "").strip()
     jab3 = (mou_data.get("jabatan_pihak_ketiga") or "").strip()
 
@@ -399,13 +434,13 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
         "PT. SARANA TRANS BERSAMA JAYA",
         "PT Sarana Trans Bersama Jaya",
         "PT SARANA TRANS BERSAMA JAYA",
-        "PT Sarana Trans Bersama Jaya",
+        "PT SARANA TRANS BERSAMA JAYA",
     ]
     contoh_pihak3_candidates = [
         "PT. HARAPAN BARU SEJAHTERA PLASTIK",
         "PT Harapan Baru Sejahtera Plastik",
         "PT HARAPAN BARU SEJAHTERA PLASTIK",
-        "PT Harapan Baru Sejahtera Plastik",
+        "PT HARAPAN BARU SEJAHTERA PLASTIK",
     ]
 
     replace_everywhere_keep_format(doc, contoh_pihak1_candidates, pihak1)
@@ -414,13 +449,16 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
 
     def replace_no_line(container_paragraphs):
         for p in container_paragraphs:
-            if re.search(r'\bNo\s*:', p.text, flags=re.IGNORECASE):
+            if re.search(r'\bNo\s*:', p.text or "", flags=re.IGNORECASE):
                 for run in p.runs:
-                    if re.search(r'\bNo\s*:', run.text, flags=re.IGNORECASE):
+                    if re.search(r'\bNo\s*:', run.text or "", flags=re.IGNORECASE):
                         run.text = re.sub(r'\bNo\s*:\s*.*', f"No : {nomor_full}", run.text, flags=re.IGNORECASE)
                         return True
-                replace_in_runs_keep_format(p, p.text, f"No : {nomor_full}")
-                return True
+                if p.text:
+                    for r in p.runs:
+                        r.text = ""
+                    p.add_run(f"No : {nomor_full}")
+                    return True
         return False
 
     replace_no_line(doc.paragraphs)
@@ -433,7 +471,7 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     kalimat_tanggal = f"Pada hari ini {tanggal_text} kami yang bertanda tangan di bawah ini :"
     def replace_pada_hari_ini(container_paragraphs):
         for p in container_paragraphs:
-            if "Pada hari ini" in p.text and "bertanda tangan" in p.text:
+            if ("Pada hari ini" in (p.text or "")) and ("bertanda tangan" in (p.text or "")):
                 if p.runs:
                     p.runs[0].text = kalimat_tanggal
                     for r in p.runs[1:]:
@@ -450,11 +488,6 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
                 if replace_pada_hari_ini(cell.paragraphs):
                     break
 
-    if ttd1:
-        replace_everywhere_keep_format(doc, ["Huang Feifang"], ttd1)
-    if jab1:
-        replace_everywhere_keep_format(doc, ["Direktur Utama"], jab1)
-
     contoh_alamat_p1_candidates = [
         "Jl. Raya Serang KM. 22 No. 30, Desa Pasir Bolang, Kec Tigaraksa, Tangerang Banten",
         "Jl. Raya Serang KM. 22 No. 30, Desa Pasir Bolang, Kec. Tigaraksa, Tangerang Banten",
@@ -462,17 +495,47 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     if alamat1:
         replace_everywhere_keep_format(doc, contoh_alamat_p1_candidates, alamat1)
 
-    if ttd3:
-        replace_everywhere_keep_format(doc, ["Yogi Aditya", "Yogi Permana", "Yogi"], ttd3)
-    if jab3:
-        replace_everywhere_keep_format(doc, ["Direktur", "Direktur Utama"], jab3)
-
     contoh_alamat_p3_candidates = [
         "Jl. Karawang – Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi – Jawa Barat",
         "Jl. Karawang - Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi - Jawa Barat",
     ]
     if alamat3:
         replace_everywhere_keep_format(doc, contoh_alamat_p3_candidates, alamat3)
+
+    if ttd1:
+        _replace_name_title_near(
+            doc,
+            ["Huang Feifang", "HUANG FEIFANG"],
+            ttd1,
+            ["Direktur Utama", "DIREKTUR UTAMA", "Direktur", "DIREKTUR", "General Manager", "GENERAL MANAGER", "Manager", "MANAGER"],
+            jab1 or ""
+        )
+
+    if ttd2:
+        _replace_name_title_near(
+            doc,
+            ["Syaeful Bakri", "SYAEFUL BAKRI"],
+            ttd2,
+            ["Direktur", "DIREKTUR", "Direktur Utama", "DIREKTUR UTAMA", "General Manager", "GENERAL MANAGER", "Manager", "MANAGER"],
+            jab2 or ""
+        )
+    elif jab2:
+        _replace_name_title_near(
+            doc,
+            ["Syaeful Bakri", "SYAEFUL BAKRI"],
+            "Syaeful Bakri",
+            ["Direktur", "DIREKTUR", "Direktur Utama", "DIREKTUR UTAMA", "General Manager", "GENERAL MANAGER", "Manager", "MANAGER"],
+            jab2
+        )
+
+    if ttd3:
+        _replace_name_title_near(
+            doc,
+            ["Yogi Permana", "Yogi Aditya", "Yogi", "YOGI PERMANA", "YOGI ADITYA", "YOGI"],
+            ttd3,
+            ["Direktur", "DIREKTUR", "Direktur Utama", "DIREKTUR UTAMA", "General Manager", "GENERAL MANAGER", "Manager", "MANAGER"],
+            jab3 or ""
+        )
 
     items = mou_data.get("items_limbah") or []
     target_table = None
@@ -519,12 +582,10 @@ def _thin_border():
     side = Side(style="thin", color="000000")
     return Border(left=side, right=side, top=side, bottom=side)
 
-
 def _set_border(ws, r1, c1, r2, c2, border):
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
             ws.cell(r, c).border = border
-
 
 def _money_format_cell(cell):
     cell.number_format = '#,##0'
@@ -633,8 +694,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["F7"].value = inv_date
     ws["F7"].alignment = center
 
-    start_row = 9
-    ws["A8"].value = ""
     ws["A9"].value = "Qty"
     ws["B9"].value = ""
     ws["C9"].value = "Date"
@@ -646,7 +705,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ws[f"{c}9"].alignment = center
 
     items = inv.get("items") or []
-    r = start_row + 1
+    r = 10
 
     subtotal = 0
     for it in items:
@@ -774,6 +833,141 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     out_path = os.path.join(folder, f"{fname_base}.xlsx")
     wb.save(out_path)
     return f"{fname_base}.xlsx"
+
+
+def create_invoice_pdf(inv: dict, fname_base: str) -> str:
+    try:
+        folder = str(FILES_DIR)
+    except Exception:
+        folder = "static/files"
+    os.makedirs(folder, exist_ok=True)
+
+    out_path = os.path.join(folder, f"{fname_base}.pdf")
+
+    c = canvas.Canvas(out_path, pagesize=A4)
+    width, height = A4
+
+    def draw_text(x, y, txt, size=10, bold=False):
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+        c.drawString(x, y, txt)
+
+    invoice_no = inv.get("invoice_no") or ""
+    inv_date = inv.get("invoice_date") or ""
+
+    bill_to = inv.get("bill_to") or {}
+    ship_to = inv.get("ship_to") or {}
+    phone = inv.get("phone") or ""
+    fax = inv.get("fax") or ""
+    attn = inv.get("attn") or ""
+
+    items = inv.get("items") or []
+    freight = int(inv.get("freight") or 0)
+    ppn_rate = float(inv.get("ppn_rate") or 0.11)
+    deposit = int(inv.get("deposit") or 0)
+    payment = inv.get("payment") or {}
+
+    y = height - 50
+    draw_text(40, y, "INVOICE", 18, True)
+    draw_text(380, y, f"Invoice No: {invoice_no}", 10, True)
+    y -= 14
+    draw_text(380, y, f"Date: {inv_date}", 10, True)
+
+    y -= 30
+    draw_text(40, y, "Bill To:", 11, True)
+    draw_text(300, y, "Ship To:", 11, True)
+
+    y -= 14
+    bt_lines = [bill_to.get("name", ""), bill_to.get("address", ""), bill_to.get("address2", "")]
+    st_lines = [ship_to.get("name", ""), ship_to.get("address", ""), ship_to.get("address2", "")]
+    bt_lines = [x for x in bt_lines if (x or "").strip()]
+    st_lines = [x for x in st_lines if (x or "").strip()]
+
+    yy = y
+    for line in bt_lines[:4]:
+        draw_text(40, yy, str(line), 9, False)
+        yy -= 12
+    yy2 = y
+    for line in st_lines[:4]:
+        draw_text(300, yy2, str(line), 9, False)
+        yy2 -= 12
+
+    y = min(yy, yy2) - 10
+    draw_text(40, y, f"Phone: {phone}", 9, False)
+    draw_text(300, y, f"Fax: {fax}", 9, False)
+    y -= 12
+    draw_text(40, y, f"Attn: {attn}", 9, False)
+
+    y -= 22
+    c.setLineWidth(1)
+    c.rect(40, y - 240, width - 80, 240, stroke=1, fill=0)
+
+    header_y = y - 18
+    draw_text(50, header_y, "Qty", 9, True)
+    draw_text(90, header_y, "Unit", 9, True)
+    draw_text(130, header_y, "Date", 9, True)
+    draw_text(190, header_y, "Description", 9, True)
+    draw_text(430, header_y, "Price", 9, True)
+    draw_text(500, header_y, "Amount", 9, True)
+
+    c.line(40, header_y - 6, width - 40, header_y - 6)
+
+    row_y = header_y - 20
+    subtotal = 0
+    max_rows = 10
+    for idx in range(max_rows):
+        if idx < len(items):
+            it = items[idx]
+            qty = it.get("qty") or 0
+            unit = it.get("unit") or ""
+            dt = it.get("date") or inv_date
+            desc = it.get("description") or ""
+            price = int(it.get("price") or 0)
+            amount = int(round(float(qty) * price))
+            subtotal += amount
+
+            draw_text(50, row_y, str(qty), 9, False)
+            draw_text(90, row_y, str(unit), 9, False)
+            draw_text(130, row_y, str(dt), 9, False)
+            draw_text(190, row_y, str(desc)[:45], 9, False)
+            draw_text(430, row_y, f"{price:,}".replace(",", "."), 9, False)
+            draw_text(500, row_y, f"{amount:,}".replace(",", "."), 9, False)
+
+        row_y -= 18
+
+    total = subtotal + freight
+    ppn = int(round(total * ppn_rate))
+    balance = total + ppn - deposit
+
+    y2 = y - 260
+    draw_text(380, y2, "Subtotal:", 10, True)
+    draw_text(500, y2, f"{subtotal:,}".replace(",", "."), 10, False)
+    y2 -= 14
+    draw_text(380, y2, "Freight:", 10, True)
+    draw_text(500, y2, f"{freight:,}".replace(",", "."), 10, False)
+    y2 -= 14
+    draw_text(380, y2, "Total:", 10, True)
+    draw_text(500, y2, f"{total:,}".replace(",", "."), 10, False)
+    y2 -= 14
+    draw_text(380, y2, f"PPN {int(ppn_rate*100)}%:", 10, True)
+    draw_text(500, y2, f"{ppn:,}".replace(",", "."), 10, False)
+    y2 -= 14
+    draw_text(380, y2, "Deposit:", 10, True)
+    draw_text(500, y2, f"{deposit:,}".replace(",", "."), 10, False)
+    y2 -= 16
+    draw_text(380, y2, "Balance Due:", 11, True)
+    draw_text(500, y2, f"{balance:,}".replace(",", "."), 11, True)
+
+    y3 = 80
+    draw_text(40, y3 + 40, "Please Transfer Full Amount to:", 10, True)
+    draw_text(40, y3 + 24, f"Beneficiary : {payment.get('beneficiary','')}", 9, False)
+    draw_text(40, y3 + 12, f"Bank Name   : {payment.get('bank_name','')}", 9, False)
+    draw_text(40, y3 + 0,  f"Branch      : {payment.get('branch','')}", 9, False)
+    draw_text(40, y3 - 12, f"IDR Acct    : {payment.get('idr_acct','')}", 9, False)
+
+    c.showPage()
+    c.save()
+
+    return f"{fname_base}.pdf"
 
 
 @app.route("/")
@@ -937,9 +1131,9 @@ def chat():
             conversations[sid] = state
 
             out_text = (
-                "Baik, saya bantu buatkan <b>INVOICE (Excel)</b>.<br><br>"
+                "Baik, saya bantu buatkan <b>INVOICE</b>.<br><br>"
                 f"✅ Invoice No: <b>{inv_no}</b><br>"
-                f"✅ Date: <b>{state['data']['invoice_date']}</b> (otomatis hari ini)<br><br>"
+                f"✅ Date: <b>{state['data']['invoice_date']}</b><br><br>"
                 "❓ <b>1. Bill To - Nama Perusahaan?</b>"
             )
 
@@ -992,11 +1186,7 @@ def chat():
                 state["data"]["ship_to"] = dict(state["data"]["bill_to"])
                 state["step"] = "inv_phone"
                 conversations[sid] = state
-
-                out_text = (
-                    f"✅ Ship To: <b>(sama)</b><br><br>"
-                    "❓ <b>3. Phone?</b> (boleh kosong, ketik '-' jika tidak ada)"
-                )
+                out_text = "❓ <b>3. Phone?</b> (boleh kosong, ketik '-' jika tidak ada)"
             elif ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower):
                 state["step"] = "inv_shipto_name"
                 conversations[sid] = state
@@ -1059,7 +1249,6 @@ def chat():
             state["data"]["current_item"] = {}
             conversations[sid] = state
             out_text = (
-                "✅ Header invoice selesai.<br><br>"
                 "📦 <b>Item #1</b><br>"
                 "❓ <b>6. Qty?</b> (contoh: 749 atau 3,5)"
             )
@@ -1098,7 +1287,7 @@ def chat():
                 state["data"]["current_item"]["description"] = ""
                 state["step"] = "inv_item_desc_manual"
                 conversations[sid] = state
-                out_text = "❓ <b>6C. Deskripsi (manual) apa?</b> (contoh: plastik bekas / fly ash / dll)"
+                out_text = "❓ <b>6C. Deskripsi (manual) apa?</b>"
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                     db_update_state(int(history_id_in), state)
@@ -1151,10 +1340,7 @@ def chat():
             state["step"] = "inv_add_more_item"
             conversations[sid] = state
 
-            out_text = (
-                f"✅ Item #{num} tersimpan!<br>"
-                f"❓ <b>Tambah item lagi?</b> (ya/tidak)"
-            )
+            out_text = f"✅ Item #{num} tersimpan!<br>❓ <b>Tambah item lagi?</b> (ya/tidak)"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -1166,7 +1352,7 @@ def chat():
                 state["step"] = "inv_item_qty"
                 state["data"]["current_item"] = {}
                 conversations[sid] = state
-                out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>6. Qty?</b> (contoh: 100 / 3,5)"
+                out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>6. Qty?</b>"
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                     db_update_state(int(history_id_in), state)
@@ -1198,8 +1384,6 @@ def chat():
 
         if state.get("step") == "inv_deposit":
             state["data"]["deposit"] = parse_amount_id(text)
-            state["step"] = "inv_generate"
-            conversations[sid] = state
 
             nama_pt_raw = (state["data"].get("bill_to") or {}).get("name", "").strip()
             safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
@@ -1208,10 +1392,14 @@ def chat():
             fname_base = make_unique_filename_base(base_fname)
 
             xlsx = create_invoice_xlsx(state["data"], fname_base)
+            pdf_preview = create_invoice_pdf(state["data"], fname_base)
+
+            files = [
+                {"type": "xlsx", "filename": xlsx, "url": f"/static/files/{xlsx}"},
+                {"type": "pdf", "filename": pdf_preview, "url": f"/static/files/{pdf_preview}"},
+            ]
 
             conversations[sid] = {'step': 'idle', 'data': {}}
-
-            files = [{"type": "xlsx", "filename": xlsx, "url": f"/static/files/{xlsx}"}]
 
             history_title = f"Invoice {nama_pt_raw}" if nama_pt_raw else "Invoice"
             history_task_type = "invoice"
@@ -1245,11 +1433,11 @@ def chat():
                 )
 
             out_text = (
-                "🎉 <b>Invoice berhasil dibuat (Excel)!</b><br><br>"
+                "🎉 <b>Invoice berhasil dibuat!</b><br><br>"
                 f"✅ Invoice No: <b>{state['data'].get('invoice_no')}</b><br>"
                 f"✅ Bill To: <b>{(state['data'].get('bill_to') or {}).get('name','')}</b><br>"
-                f"✅ Total Item: <b>{len(state['data'].get('items') or [])}</b><br>"
-                "📎 Silakan download file Excel pada daftar dokumen."
+                f"✅ Total Item: <b>{len(state['data'].get('items') or [])}</b><br><br>"
+                "✅ Preview tersedia dalam PDF, download tetap Excel."
             )
 
             db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
@@ -1278,6 +1466,8 @@ def chat():
                 'alamat_pihak_ketiga': "",
                 'ttd_pihak_pertama': "",
                 'jabatan_pihak_pertama': "",
+                'ttd_pihak_kedua': "Syaeful Bakri",
+                'jabatan_pihak_kedua': "Direktur",
                 'ttd_pihak_ketiga': "",
                 'jabatan_pihak_ketiga': "",
             }
@@ -1285,8 +1475,8 @@ def chat():
 
             out_text = (
                 "Baik, saya bantu buatkan <b>MoU Tripartit</b>.<br><br>"
-                f"✅ No Depan: <b>{nomor_depan}</b> (auto mulai 000)<br>"
-                "✅ Nomor lengkap otomatis mengikuti format template.<br>"
+                f"✅ No Depan: <b>{nomor_depan}</b><br>"
+                "✅ Nomor lengkap otomatis mengikuti format.<br>"
                 "✅ Tanggal otomatis hari ini.<br><br>"
                 "❓ <b>1. Nama Perusahaan (PIHAK PERTAMA / Penghasil Limbah)?</b>"
             )
@@ -1318,8 +1508,8 @@ def chat():
                 alamat = search_company_address_ai(text).strip()
             if not alamat:
                 alamat = "Di Tempat"
-
             state['data']['alamat_pihak_pertama'] = alamat
+
             state['step'] = 'mou_pilih_pihak_ketiga'
             conversations[sid] = state
 
@@ -1513,9 +1703,7 @@ def chat():
                 conversations[sid] = state
 
                 out_text = (
-                    "✅ Data limbah selesai.<br><br>"
-                    "❓ <b>Terakhir, siapa nama penandatangan PIHAK PERTAMA?</b><br>"
-                    "<i>(Nama yang akan muncul di bagian tanda tangan bawah)</i>"
+                    "❓ <b>Nama penandatangan PIHAK PERTAMA?</b>"
                 )
 
                 if history_id_in:
@@ -1534,31 +1722,51 @@ def chat():
             state['step'] = 'mou_jabatan_pihak_pertama'
             conversations[sid] = state
 
-            out_text = (
-                "❓ <b>Jabatan penandatangan PIHAK PERTAMA apa?</b><br>"
-                "<i>(Contoh: Direktur Utama / Direktur / Manager / dll)</i>"
-            )
-
+            out_text = "❓ <b>Jabatan penandatangan PIHAK PERTAMA?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
-
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         if state.get('step') == 'mou_jabatan_pihak_pertama':
             state['data']['jabatan_pihak_pertama'] = text.strip()
-            state['step'] = 'mou_ttd_pihak_ketiga'
+            state['step'] = 'mou_ttd_pihak_kedua'
             conversations[sid] = state
 
             out_text = (
-                "❓ <b>Terakhir, siapa nama penandatangan PIHAK KETIGA?</b><br>"
-                "<i>(Nama yang akan muncul di bagian tanda tangan bawah)</i>"
+                f"❓ <b>Nama penandatangan PIHAK KEDUA?</b><br>"
+                f"<i>(Default: {state['data'].get('ttd_pihak_kedua')}) | ketik '-' untuk default</i>"
             )
-
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
 
+        if state.get('step') == 'mou_ttd_pihak_kedua':
+            if text.strip() not in ("-", ""):
+                state['data']['ttd_pihak_kedua'] = text.strip()
+            state['step'] = 'mou_jabatan_pihak_kedua'
+            conversations[sid] = state
+
+            out_text = (
+                f"❓ <b>Jabatan penandatangan PIHAK KEDUA?</b><br>"
+                f"<i>(Default: {state['data'].get('jabatan_pihak_kedua')}) | ketik '-' untuk default</i>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return jsonify({"text": out_text, "history_id": history_id_in})
+
+        if state.get('step') == 'mou_jabatan_pihak_kedua':
+            if text.strip() not in ("-", ""):
+                state['data']['jabatan_pihak_kedua'] = text.strip()
+            state['step'] = 'mou_ttd_pihak_ketiga'
+            conversations[sid] = state
+
+            out_text = "❓ <b>Nama penandatangan PIHAK KETIGA?</b>"
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         if state.get('step') == 'mou_ttd_pihak_ketiga':
@@ -1566,15 +1774,10 @@ def chat():
             state['step'] = 'mou_jabatan_pihak_ketiga'
             conversations[sid] = state
 
-            out_text = (
-                "❓ <b>Jabatan penandatangan PIHAK KETIGA apa?</b><br>"
-                "<i>(Contoh: Direktur Utama / Direktur / Manager / dll)</i>"
-            )
-
+            out_text = "❓ <b>Jabatan penandatangan PIHAK KETIGA?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
-
             return jsonify({"text": out_text, "history_id": history_id_in})
 
         if state.get('step') == 'mou_jabatan_pihak_ketiga':
@@ -1647,7 +1850,7 @@ def chat():
                 "history_id": history_id
             })
 
-        if ('quotation' in lower or 'penawaran' in lower or ('buat' in lower and 'mou' not in lower)):
+        if ('quotation' in lower or 'penawaran' in lower or ('buat' in lower and 'mou' not in lower and 'invoice' not in lower and 'faktur' not in lower)):
             nomor_depan = get_next_nomor()
             state['step'] = 'nama_perusahaan'
             now = datetime.now()
@@ -1679,7 +1882,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_created or history_id_in})
 
-        if state.get('step') == 'nama_perusahaan':
+        if state['step'] == 'nama_perusahaan':
             state['data']['nama_perusahaan'] = text
 
             alamat = search_company_address(text).strip()
@@ -1705,7 +1908,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'jenis_kode_limbah':
+        elif state['step'] == 'jenis_kode_limbah':
             if is_non_b3_input(text):
                 state['data']['current_item']['kode_limbah'] = "NON B3"
                 state['data']['current_item']['jenis_limbah'] = ""
@@ -1771,7 +1974,7 @@ def chat():
 
                     return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'manual_jenis_limbah':
+        elif state['step'] == 'manual_jenis_limbah':
             state['data']['current_item']['jenis_limbah'] = text
             state['step'] = 'manual_satuan'
             conversations[sid] = state
@@ -1788,7 +1991,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'manual_satuan':
+        elif state['step'] == 'manual_satuan':
             state['data']['current_item']['satuan'] = text
             state['step'] = 'harga'
             conversations[sid] = state
@@ -1804,7 +2007,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'harga':
+        elif state['step'] == 'harga':
             harga_converted = parse_amount_id(text)
             state['data']['current_item']['harga'] = harga_converted
 
@@ -1822,11 +2025,13 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'tambah_item':
+        elif state['step'] == 'tambah_item':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
+
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if 'ya' in lower or 'iya' in lower:
@@ -1859,7 +2064,7 @@ def chat():
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'harga_transportasi':
+        elif state['step'] == 'harga_transportasi':
             transportasi_converted = parse_amount_id(text)
             state['data']['harga_transportasi'] = transportasi_converted
             state['step'] = 'tanya_mou'
@@ -1873,11 +2078,13 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'tanya_mou':
+        elif state['step'] == 'tanya_mou':
             if re.match(r'^\d+', text.strip()):
                 out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
+
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
             if 'ya' in lower or 'iya' in lower:
@@ -1909,7 +2116,7 @@ def chat():
 
                 return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'harga_mou':
+        elif state['step'] == 'harga_mou':
             mou_converted = parse_amount_id(text)
             state['data']['harga_mou'] = mou_converted
             state['step'] = 'tanya_termin'
@@ -1924,7 +2131,7 @@ def chat():
 
             return jsonify({"text": out_text, "history_id": history_id_in})
 
-        if state.get('step') == 'tanya_termin':
+        elif state['step'] == 'tanya_termin':
             if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
                 state['data']['termin_hari'] = '14'
             else:
