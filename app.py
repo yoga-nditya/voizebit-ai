@@ -1169,5 +1169,4 @@ if __name__ == "__main__":
     print(f"🌐 Port: {port}")
     print(f"💻 Platform: {platform.system()}")
     print("="*60 + "\n")
-
     app.run(host="0.0.0.0", port=port, debug=debug_mode)
