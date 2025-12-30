@@ -153,6 +153,42 @@ def style_cell_paragraph(cell, align="left", left_indent_pt=0, font="Times New R
     for r in p.runs:
         set_run_font(r, font, size)
 
+# =========================
+# NEW: helper untuk center PIHAK KETIGA (kolom kanan)
+# =========================
+def _center_paragraph_if_contains(paragraph, needles):
+    """
+    Set paragraf ke CENTER jika text mengandung salah satu 'needles'.
+    Ini tidak mengubah isi text, hanya alignment & indent.
+    """
+    if not paragraph or not paragraph.text:
+        return False
+    txt = paragraph.text.strip()
+    if not txt:
+        return False
+    for n in needles:
+        if n and (n in txt):
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            # pastikan tidak ada indent kiri yang bikin terlihat geser
+            paragraph.paragraph_format.left_indent = Pt(0)
+            paragraph.paragraph_format.first_line_indent = Pt(0)
+            return True
+    return False
+
+def _center_everywhere_for_needles(doc, needles):
+    """
+    Scan semua paragraf (body + table cells) dan center
+    hanya untuk paragraf yang mengandung needles.
+    """
+    for p in doc.paragraphs:
+        _center_paragraph_if_contains(p, needles)
+
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    _center_paragraph_if_contains(p, needles)
+
 
 # =========================
 # MoU Counter (as-is)
@@ -302,6 +338,20 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     ]
     if alamat3:
         replace_everywhere_keep_format(doc, contoh_alamat_p3_candidates, alamat3)
+
+    # =========================
+    # NEW: Paksa CENTER untuk kolom kanan (PIHAK KETIGA)
+    # Hanya mempengaruhi paragraf yang berisi nama/jabatan pihak ketiga
+    # =========================
+    pihak_ketiga_needles = [
+        # placeholder yang biasa ada di template
+        "Yogi Aditya", "Yogi Permana", "Yogi",
+        "General Manager", "GENERAL MANAGER",
+        "Direktur", "DIREKTUR",
+        # nilai aktual dari input user
+        ttd3, jab3
+    ]
+    _center_everywhere_for_needles(doc, pihak_ketiga_needles)
 
     items = mou_data.get("items_limbah") or []
     target_table = None

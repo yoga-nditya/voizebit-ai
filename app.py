@@ -232,7 +232,6 @@ def chat():
 def download(filename):
     return send_from_directory(str(FILES_DIR), filename, as_attachment=True)
 
-
 if __name__ == "__main__":
     port = FLASK_PORT
     debug_mode = FLASK_DEBUG

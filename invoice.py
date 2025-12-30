@@ -8,6 +8,11 @@ from openpyxl.styles import Font, Alignment, Border, Side
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
+
+# ✅ NEW: untuk ambil image1.jpeg dari docx template
+import zipfile
+from io import BytesIO
 
 from limbah_database import (
     find_limbah_by_kode,
@@ -19,6 +24,7 @@ from utils import (
     search_company_address, search_company_address_ai,
 )
 from config_new import FILES_DIR
+
 
 def is_non_b3_input(text: str) -> bool:
     if not text:
@@ -180,7 +186,7 @@ def get_next_invoice_no() -> str:
 
 
 # =========================
-# Generate Invoice (as-is)
+# Generate Invoice XLSX (AS-IS, jangan diubah)
 # =========================
 
 def _thin_border():
@@ -474,7 +480,50 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb.save(out_path)
     return f"{fname_base}.xlsx"
 
-def create_invoice_pdf(inv: dict, fname_base: str) -> str:
+
+# =========================
+# ✅ NEW: PDF pakai template DOCX (background image) + overlay text
+# =========================
+
+def _extract_invoice_bg_image_bytes(template_docx_path: str) -> bytes:
+    """
+    Template kamu berisi 1 gambar: word/media/image1.jpeg
+    Kita extract bytes-nya lalu dipakai sebagai background PDF.
+    """
+    if not os.path.exists(template_docx_path):
+        raise Exception(f"Template invoice tidak ditemukan: {template_docx_path}")
+
+    with zipfile.ZipFile(template_docx_path, "r") as z:
+        # prioritas image1.jpeg, fallback cari media image pertama
+        target = None
+        for name in z.namelist():
+            if name.lower() == "word/media/image1.jpeg":
+                target = name
+                break
+        if not target:
+            # fallback: cari file gambar pertama
+            for name in z.namelist():
+                if name.lower().startswith("word/media/") and name.lower().endswith((".jpg", ".jpeg", ".png")):
+                    target = name
+                    break
+        if not target:
+            raise Exception("Tidak menemukan gambar background di template invoice.docx (word/media/*).")
+
+        return z.read(target)
+
+def _rupiah(n: int) -> str:
+    try:
+        n = int(n)
+    except:
+        n = 0
+    return f"{n:,}".replace(",", ".")
+
+def create_invoice_pdf_from_template(inv: dict, fname_base: str) -> str:
+    """
+    Output PDF A4:
+    - background: image dari tamplate invoice.docx
+    - overlay: field invoice
+    """
     try:
         folder = str(FILES_DIR)
     except Exception:
@@ -482,13 +531,18 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     os.makedirs(folder, exist_ok=True)
 
     out_path = os.path.join(folder, f"{fname_base}.pdf")
+
+    template_path = "tamplate invoice.docx"  # ✅ sesuai permintaan: ada di root
+    bg_bytes = _extract_invoice_bg_image_bytes(template_path)
+    bg_img = ImageReader(BytesIO(bg_bytes))
+
     c = canvas.Canvas(out_path, pagesize=A4)
-    width, height = A4
+    W, H = A4
 
-    def draw_text(x, y, txt, size=10, bold=False):
-        c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
-        c.drawString(x, y, txt)
+    # draw background full page
+    c.drawImage(bg_img, 0, 0, width=W, height=H, preserveAspectRatio=True, mask='auto')
 
+    # --- ambil data invoice ---
     invoice_no = inv.get("invoice_no") or ""
     inv_date = inv.get("invoice_date") or ""
     bill_to = inv.get("bill_to") or {}
@@ -508,112 +562,194 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     deposit = int(inv.get("deposit") or 0)
     payment = inv.get("payment") or {}
 
-    y = height - 50
-    draw_text(40, y, "INVOICE", 18, True)
-    draw_text(380, y, f"Invoice: {invoice_no}", 10, True)
-    y -= 14
-    draw_text(380, y, f"Date: {inv_date}", 10, True)
-    y -= 14
-    draw_text(380, y, f"No. Surat Jalan: {no_surat_jalan}", 9, False)
-
-    y -= 30
-    draw_text(40, y, "Bill To:", 11, True)
-    draw_text(300, y, "Ship To:", 11, True)
-
-    y -= 14
-    bt_lines = [bill_to.get("name",""), bill_to.get("address",""), bill_to.get("address2","")]
-    st_lines = [ship_to.get("name",""), ship_to.get("address",""), ship_to.get("address2","")]
-    bt_lines = [x for x in bt_lines if (x or "").strip()]
-    st_lines = [x for x in st_lines if (x or "").strip()]
-
-    yy = y
-    for line in bt_lines[:4]:
-        draw_text(40, yy, str(line), 9, False)
-        yy -= 12
-    yy2 = y
-    for line in st_lines[:4]:
-        draw_text(300, yy2, str(line), 9, False)
-        yy2 -= 12
-
-    y = min(yy, yy2) - 10
-    draw_text(40, y, f"Phone: {phone}", 9, False)
-    draw_text(300, y, f"Fax: {fax}", 9, False)
-    y -= 12
-    draw_text(40, y, f"Attn: {attn}", 9, False)
-
-    y -= 18
-    draw_text(40, y, f"Ref No.: {ref_no}", 9, False)
-    draw_text(170, y, f"Sales Person: {sales_person}", 9, False)
-    draw_text(380, y, f"Ship Via: {ship_via}", 9, False)
-    y -= 12
-    draw_text(380, y, f"Ship Date: {ship_date}", 9, False)
-    draw_text(40, y, f"Terms: {terms}", 9, False)
-
-    y -= 20
-    table_top = y
-    table_height = 220
-    c.rect(40, table_top - table_height, width - 80, table_height, stroke=1, fill=0)
-
-    header_y = table_top - 18
-    draw_text(50, header_y, "Qty", 9, True)
-    draw_text(90, header_y, "Unit", 9, True)
-    draw_text(130, header_y, "Date", 9, True)
-    draw_text(190, header_y, "Description", 9, True)
-    draw_text(430, header_y, "Price", 9, True)
-    draw_text(500, header_y, "Amount", 9, True)
-    c.line(40, header_y - 6, width - 40, header_y - 6)
-
-    row_y = header_y - 20
+    # hitung subtotal
     subtotal = 0
-    max_rows = 10
-    for idx in range(max_rows):
-        if idx < len(items):
-            it = items[idx]
-            qty = it.get("qty") or 0
-            unit = it.get("unit") or ""
-            dt = it.get("date") or inv_date
-            desc = it.get("description") or ""
-            price = int(it.get("price") or 0)
-            amount = int(round(float(qty) * price))
-            subtotal += amount
-
-            draw_text(50, row_y, str(qty), 9, False)
-            draw_text(90, row_y, str(unit), 9, False)
-            draw_text(130, row_y, str(dt), 9, False)
-            draw_text(190, row_y, str(desc)[:55], 9, False)
-            draw_text(430, row_y, f"{price:,}".replace(",", "."), 9, False)
-            draw_text(500, row_y, f"{amount:,}".replace(",", "."), 9, False)
-        row_y -= 18
+    for it in items:
+        qty = float(it.get("qty") or 0)
+        price = int(it.get("price") or 0)
+        subtotal += int(round(qty * price))
 
     total_before_ppn = subtotal + freight
     ppn = int(round(total_before_ppn * ppn_rate))
     balance = total_before_ppn + ppn - deposit
 
-    y2 = table_top - table_height - 20
-    draw_text(380, y2, "Total:", 10, True)
-    draw_text(500, y2, f"{subtotal:,}".replace(",", "."), 10, False)
-    y2 -= 14
-    draw_text(380, y2, "Freight:", 10, True)
-    draw_text(500, y2, f"{freight:,}".replace(",", "."), 10, False)
-    y2 -= 14
-    draw_text(380, y2, "Total:", 10, True)
-    draw_text(500, y2, f"{total_before_ppn:,}".replace(",", "."), 10, False)
-    y2 -= 14
-    draw_text(380, y2, f"PPN {int(ppn_rate*100)}%:", 10, True)
-    draw_text(500, y2, f"{ppn:,}".replace(",", "."), 10, False)
-    y2 -= 14
-    draw_text(380, y2, "Less: Deposit:", 10, True)
-    draw_text(500, y2, f"{deposit:,}".replace(",", "."), 10, False)
-    y2 -= 16
-    draw_text(380, y2, "Balance Due:", 11, True)
-    draw_text(500, y2, f"{balance:,}".replace(",", "."), 11, True)
+    # =========================
+    # ✅ POSISI TEXT OVERLAY (KALAU MAU NGE-PASIN, EDIT ANGKA DI SINI)
+    # Koordinat: (x, y) dalam POINT (origin kiri bawah)
+    # =========================
+    TPL = {
+        # Bill To block
+        "bill_x": 55,
+        "bill_y": 655,   # baris pertama
+        "bill_lh": 13,   # line height
 
-    y3 = 90
-    draw_text(40, y3 + 40, "Please Transfer Full Amount to:", 10, True)
-    draw_text(40, y3 + 24, f"Beneficiary : {payment.get('beneficiary','')}", 9, False)
-    draw_text(40, y3 + 12, f"Bank Name   : {payment.get('bank_name','')}", 9, False)
-    draw_text(40, y3 + 0,  f"Branch      : {payment.get('branch','')}", 9, False)
-    draw_text(40, y3 - 12, f"IDR Acct    : {payment.get('idr_acct','')}", 9, False)
+        # Ship To block
+        "ship_x": 330,
+        "ship_y": 655,
+        "ship_lh": 13,
+
+        # Phone/Fax/Attn
+        "phone_x": 88,
+        "phone_y": 556,
+        "fax_x": 325,
+        "fax_y": 556,
+        "attn_x": 115,
+        "attn_y": 525,
+
+        # kanan atas: invoice header
+        "invno_x": 505,
+        "invno_y": 568,
+        "date_x": 505,
+        "date_y": 552,
+        "sj_x": 505,
+        "sj_y": 536,
+
+        # baris Ref / Sales / ShipVia / ShipDate / Terms
+        "ref_x": 85,
+        "ref_y": 482,
+        "sales_x": 210,
+        "sales_y": 482,
+        "shipvia_x": 360,
+        "shipvia_y": 482,
+        "shipdate_x": 468,
+        "shipdate_y": 482,
+        "terms_x": 548,
+        "terms_y": 482,
+
+        # items table start
+        "row_y": 430,
+        "row_lh": 16,
+        "qty_x": 63,
+        "unit_x": 110,
+        "dateitem_x": 135,
+        "desc_x": 205,
+        "price_x": 480,
+        "amt_x": 555,
+
+        "max_rows": 10,
+
+        # totals kanan bawah
+        "subtotal_x": 555,
+        "subtotal_y": 286,
+        "freight_x": 555,
+        "freight_y": 270,
+        "total2_x": 555,
+        "total2_y": 254,
+        "ppn_x": 555,
+        "ppn_y": 238,
+        "deposit_x": 555,
+        "deposit_y": 222,
+        "balance_x": 555,
+        "balance_y": 206,
+
+        # payment kiri bawah
+        "pay_x": 115,
+        "pay_y": 286,
+        "pay_lh": 13,
+    }
+
+    def draw(x, y, txt, size=9, bold=False, align_right=False):
+        c.setFont("Helvetica-Bold" if bold else "Helvetica", size)
+        if txt is None:
+            txt = ""
+        s = str(txt)
+        if align_right:
+            c.drawRightString(x, y, s)
+        else:
+            c.drawString(x, y, s)
+
+    # ---- Bill To / Ship To (multi-line) ----
+    bill_lines = [
+        (bill_to.get("name") or "").strip(),
+        (bill_to.get("address") or "").strip(),
+        (bill_to.get("address2") or "").strip(),
+    ]
+    bill_lines = [x for x in bill_lines if x]
+    yy = TPL["bill_y"]
+    for line in bill_lines[:4]:
+        draw(TPL["bill_x"], yy, line, size=9, bold=False)
+        yy -= TPL["bill_lh"]
+
+    ship_lines = [
+        (ship_to.get("name") or "").strip(),
+        (ship_to.get("address") or "").strip(),
+        (ship_to.get("address2") or "").strip(),
+    ]
+    ship_lines = [x for x in ship_lines if x]
+    yy2 = TPL["ship_y"]
+    for line in ship_lines[:4]:
+        draw(TPL["ship_x"], yy2, line, size=9, bold=False)
+        yy2 -= TPL["ship_lh"]
+
+    # phone / fax / attn
+    draw(TPL["phone_x"], TPL["phone_y"], phone, size=9)
+    draw(TPL["fax_x"], TPL["fax_y"], fax, size=9)
+    draw(TPL["attn_x"], TPL["attn_y"], attn, size=9)
+
+    # kanan atas
+    draw(TPL["invno_x"], TPL["invno_y"], invoice_no, size=9, bold=True)
+    draw(TPL["date_x"], TPL["date_y"], inv_date, size=9, bold=True)
+    draw(TPL["sj_x"], TPL["sj_y"], no_surat_jalan, size=9)
+
+    # header row kecil
+    draw(TPL["ref_x"], TPL["ref_y"], ref_no, size=9)
+    draw(TPL["sales_x"], TPL["sales_y"], sales_person, size=9)
+    draw(TPL["shipvia_x"], TPL["shipvia_y"], ship_via, size=9)
+    draw(TPL["shipdate_x"], TPL["shipdate_y"], ship_date, size=9)
+    draw(TPL["terms_x"], TPL["terms_y"], terms, size=9, align_right=True)
+
+    # items (maks 10 row)
+    yrow = TPL["row_y"]
+    for idx in range(TPL["max_rows"]):
+        if idx < len(items):
+            it = items[idx]
+            qty = it.get("qty") or 0
+            unit = (it.get("unit") or "").strip()
+            dt = it.get("date") or inv_date
+            desc = (it.get("description") or "").strip()
+            price = int(it.get("price") or 0)
+            amount = int(round(float(qty) * price))
+
+            # qty tampil rapih (tanpa .0)
+            try:
+                qv = float(qty)
+                qty_txt = str(int(qv)) if qv.is_integer() else str(qv)
+            except:
+                qty_txt = str(qty)
+
+            draw(TPL["qty_x"], yrow, qty_txt, size=9, align_right=True)
+            draw(TPL["unit_x"], yrow, unit, size=9)
+            draw(TPL["dateitem_x"], yrow, dt, size=9)
+            draw(TPL["desc_x"], yrow, desc[:55], size=9)
+            draw(TPL["price_x"], yrow, _rupiah(price), size=9, align_right=True)
+            draw(TPL["amt_x"], yrow, _rupiah(amount), size=9, align_right=True)
+
+        yrow -= TPL["row_lh"]
+
+    # totals kanan
+    draw(TPL["subtotal_x"], TPL["subtotal_y"], _rupiah(subtotal), size=9, align_right=True)
+    draw(TPL["freight_x"], TPL["freight_y"], _rupiah(freight) if freight else "-", size=9, align_right=True)
+    draw(TPL["total2_x"], TPL["total2_y"], _rupiah(total_before_ppn), size=9, align_right=True)
+    draw(TPL["ppn_x"], TPL["ppn_y"], _rupiah(ppn), size=9, align_right=True)
+    draw(TPL["deposit_x"], TPL["deposit_y"], _rupiah(deposit) if deposit else "-", size=9, align_right=True)
+    draw(TPL["balance_x"], TPL["balance_y"], _rupiah(balance), size=10, bold=True, align_right=True)
+
+    # payment kiri bawah (ambil dari inv.payment kalau ada)
+    beneficiary = payment.get("beneficiary", "PT. Sarana Trans Bersama Jaya")
+    bank_name = payment.get("bank_name", "BCA")
+    branch = payment.get("branch", "Cibadak - Sukabumi")
+    idr_acct = payment.get("idr_acct", "35212 26666")
+
+    pay_lines = [
+        f"{beneficiary}",
+        f"{bank_name}",
+        f"{branch}",
+        f"{idr_acct}",
+    ]
+    py = TPL["pay_y"]
+    for line in pay_lines:
+        draw(TPL["pay_x"], py, line, size=9)
+        py -= TPL["pay_lh"]
 
     c.showPage()
     c.save()
@@ -621,7 +757,7 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
 
 
 # =========================
-# CHAT HANDLER INVOICE
+# CHAT HANDLER INVOICE (FLOW AS-IS, hanya output PDF diganti template)
 # =========================
 
 def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict, conversations: dict, history_id_in):
@@ -902,12 +1038,15 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         base_fname = f"Invoice - {safe_pt}" if safe_pt else "Invoice"
         fname_base = make_unique_filename_base(base_fname)
 
+        # ✅ Excel tetap seperti sebelumnya
         xlsx = create_invoice_xlsx(state["data"], fname_base)
-        pdf_preview = create_invoice_pdf(state["data"], fname_base)
+
+        # ✅ PDF sekarang pakai template invoice.docx (background)
+        pdf_preview = create_invoice_pdf_from_template(state["data"], fname_base)
 
         files = [
-            {"type": "xlsx", "filename": xlsx, "url": f"/download/{xlsx}"},
             {"type": "pdf", "filename": pdf_preview, "url": f"/download/{pdf_preview}"},
+            {"type": "xlsx", "filename": xlsx, "url": f"/download/{xlsx}"},
         ]
 
         conversations[sid] = {'step': 'idle', 'data': {}}
@@ -948,8 +1087,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             f"✅ Invoice No: <b>{state['data'].get('invoice_no')}</b><br>"
             f"✅ Bill To: <b>{(state['data'].get('bill_to') or {}).get('name','')}</b><br>"
             f"✅ Total Item: <b>{len(state['data'].get('items') or [])}</b><br><br>"
-            "📌 Preview: PDF<br>"
-            "📌 Download: Excel (.xlsx)"
+            "📌 Preview/Download: PDF (template)<br>"
+            "📌 Download: Excel (.xlsx) (format existing)"
         )
 
         db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
