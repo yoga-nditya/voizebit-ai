@@ -5,7 +5,6 @@ from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -170,29 +169,42 @@ def _invoice_counter_path() -> str:
     return os.path.join(folder, "invoice_counter.json")
 
 
-def load_invoice_counter() -> int:
+def load_invoice_counter(prefix: str) -> int:
     path = _invoice_counter_path()
     try:
         if not os.path.exists(path):
             return 0
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f) or {}
-        return int(data.get("counter", 0))
+        counters = data.get("counters") or {}
+        return int(counters.get(prefix, 0))
     except:
         return 0
 
 
-def save_invoice_counter(n: int) -> None:
+def save_invoice_counter(prefix: str, n: int) -> None:
     path = _invoice_counter_path()
+    data = {}
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+    except:
+        data = {}
+
+    counters = data.get("counters") or {}
+    counters[prefix] = int(n)
+    data["counters"] = counters
+
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"counter": int(n)}, f)
+        json.dump(data, f, ensure_ascii=False)
 
 
 def get_next_invoice_no() -> str:
     now = datetime.now()
-    prefix = now.strftime("%y%m")
-    n = load_invoice_counter() + 1
-    save_invoice_counter(n)
+    prefix = now.strftime("%d%m")
+    n = load_invoice_counter(prefix) + 1
+    save_invoice_counter(prefix, n)
     return f"{prefix}{str(n).zfill(3)}"
 
 
@@ -200,50 +212,16 @@ def _thin_side(style="thin"):
     return Side(style=style, color="000000")
 
 
-def _border_all(thin=True):
-    s = _thin_side("thin" if thin else "medium")
-    return Border(left=s, right=s, top=s, bottom=s)
-
-
-def _border_custom(left=None, right=None, top=None, bottom=None):
-    return Border(left=left, right=right, top=top, bottom=bottom)
-
-
-def _set_border(ws, r1, c1, r2, c2, border):
-    for r in range(r1, r2 + 1):
-        for c in range(c1, c2 + 1):
-            ws.cell(r, c).border = border
-
-
-def _set_border_edges(ws, r1, c1, r2, c2, thin=True):
-    s = _thin_side("thin" if thin else "medium")
+def _border_edges(ws, r1, c1, r2, c2, style="medium"):
+    s = _thin_side(style)
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
             cell = ws.cell(r, c)
-            b = cell.border
-            left = b.left
-            right = b.right
-            top = b.top
-            bottom = b.bottom
-
-            if c == c1:
-                left = s
-            if c == c2:
-                right = s
-            if r == r1:
-                top = s
-            if r == r2:
-                bottom = s
-
+            left = s if c == c1 else None
+            right = s if c == c2 else None
+            top = s if r == r1 else None
+            bottom = s if r == r2 else None
             cell.border = Border(left=left, right=right, top=top, bottom=bottom)
-
-
-def _set_inner_grid(ws, r1, c1, r2, c2):
-    s = _thin_side("thin")
-    for r in range(r1, r2 + 1):
-        for c in range(c1, c2 + 1):
-            cell = ws.cell(r, c)
-            cell.border = Border(left=s, right=s, top=s, bottom=s)
 
 
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
@@ -259,9 +237,16 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.page_margins.bottom = 0.35
 
     ws.column_dimensions["A"].width = 3
-    col_widths = {"B": 8, "C": 6, "D": 12, "E": 45, "F": 14, "G": 16}
-    for col, w in col_widths.items():
-        ws.column_dimensions[col].width = w
+    ws.column_dimensions["B"].width = 8
+    ws.column_dimensions["C"].width = 6
+    ws.column_dimensions["D"].width = 12
+    ws.column_dimensions["E"].width = 45
+    ws.column_dimensions["F"].width = 14
+    ws.column_dimensions["G"].width = 16
+    ws.column_dimensions["H"].width = 4
+    ws.column_dimensions["I"].width = 14
+    ws.column_dimensions["J"].width = 14
+    ws.column_dimensions["K"].width = 16
 
     bold = Font(bold=True)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -299,13 +284,13 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    ws["B1"].value = "Bill To:"
-    ws["B1"].font = bold
-    ws.merge_cells("B1:D1")
+    ws["D1"].value = "Bill To:"
+    ws["D1"].font = bold
+    ws.merge_cells("D1:F1")
 
-    ws["E1"].value = "Ship To:"
-    ws["E1"].font = bold
-    ws.merge_cells("E1:G1")
+    ws["I1"].value = "Ship To:"
+    ws["I1"].font = bold
+    ws.merge_cells("I1:K1")
 
     bill_lines = [
         (bill_to.get("name") or "").strip(),
@@ -320,51 +305,51 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     bill_text = "\n".join([x for x in bill_lines if x])
     ship_text = "\n".join([x for x in ship_lines if x])
 
-    ws["B2"].value = bill_text
-    ws.merge_cells("B2:D3")
-    ws["B2"].alignment = left
+    ws["D2"].value = bill_text
+    ws.merge_cells("D2:F3")
+    ws["D2"].alignment = left
 
-    ws["E2"].value = ship_text
-    ws.merge_cells("E2:G3")
-    ws["E2"].alignment = left
+    ws["I2"].value = ship_text
+    ws.merge_cells("I2:K3")
+    ws["I2"].alignment = left
 
-    ws["B5"].value = "Phone:"
-    ws["B5"].font = bold
-    ws.merge_cells("B5:C5")
-    ws["D5"].value = phone
-    ws["D5"].alignment = left_mid
+    ws["D5"].value = "Phone:"
+    ws["D5"].font = bold
+    ws.merge_cells("D5:E5")
+    ws["F5"].value = phone
+    ws["F5"].alignment = left_mid
 
-    ws["E5"].value = "Fax:"
-    ws["E5"].font = bold
-    ws.merge_cells("E5:F5")
-    ws["G5"].value = fax
-    ws["G5"].alignment = left_mid
+    ws["I5"].value = "Fax:"
+    ws["I5"].font = bold
+    ws.merge_cells("I5:J5")
+    ws["K5"].value = fax
+    ws["K5"].alignment = left_mid
 
-    ws["B7"].value = "Attn :"
-    ws["B7"].font = bold
-    ws.merge_cells("B7:C7")
-    ws["D7"].value = attn
+    ws["D7"].value = "Attn :"
+    ws["D7"].font = bold
     ws.merge_cells("D7:E7")
-    ws["D7"].alignment = left_mid
+    ws["F7"].value = attn
+    ws.merge_cells("F7:G7")
+    ws["F7"].alignment = left_mid
 
-    ws["F6"].value = "Invoice"
-    ws["F6"].font = bold
-    ws["F6"].alignment = right
-    ws["G6"].value = invoice_no
-    ws["G6"].alignment = left_mid
+    ws["J6"].value = "Invoice"
+    ws["J6"].font = bold
+    ws["J6"].alignment = right
+    ws["K6"].value = invoice_no
+    ws["K6"].alignment = left_mid
 
-    ws["F7"].value = "Date"
-    ws["F7"].font = bold
-    ws["F7"].alignment = right
-    ws["G7"].value = inv_date
-    ws["G7"].alignment = left_mid
+    ws["J7"].value = "Date"
+    ws["J7"].font = bold
+    ws["J7"].alignment = right
+    ws["K7"].value = inv_date
+    ws["K7"].alignment = left_mid
 
-    ws["E8"].value = "No. Surat Jalan"
-    ws["E8"].font = bold
-    ws["E8"].alignment = right
-    ws.merge_cells("E8:F8")
-    ws["G8"].value = no_surat_jalan
-    ws["G8"].alignment = left_mid
+    ws["I8"].value = "No. Surat Jalan"
+    ws["I8"].font = bold
+    ws["I8"].alignment = right
+    ws.merge_cells("I8:J8")
+    ws["K8"].value = no_surat_jalan
+    ws["K8"].alignment = left_mid
 
     ws.merge_cells("B10:C10")
     ws["B10"].value = "Ref No."
@@ -405,10 +390,10 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["G12"].value = terms
     ws["G12"].alignment = center
 
-    _set_inner_grid(ws, 10, 2, 12, 7)
+    _border_edges(ws, 10, 2, 12, 7, style="medium")
 
     ws["B14"].value = "Qty"
-    ws["C14"].value = ""
+    ws["C14"].value = "Unit"
     ws["D14"].value = "Date"
     ws["E14"].value = "Description"
     ws["F14"].value = "Price"
@@ -455,7 +440,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     if r < min_last_row:
         r = min_last_row
 
-    _set_inner_grid(ws, 14, 2, r - 1, 7)
+    _border_edges(ws, 14, 2, r - 1, 7, style="medium")
 
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
@@ -485,14 +470,9 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ws[f"G{rr}"].font = Font(bold=is_bold)
         money(ws[f"G{rr}"])
 
-    s = _thin_side("thin")
-    for i in range(len(labels)):
-        rr = sum_row + i
-        top = s if i == 0 else None
-        bottom = s if i == len(labels) - 1 else None
-        ws[f"G{rr}"].border = Border(left=s, right=s, top=top or s, bottom=bottom or s)
+    _border_edges(ws, sum_row, 7, sum_row + len(labels) - 1, 7, style="medium")
 
-    pay_row = sum_row
+    pay_row = sum_row + 1
     ws.merge_cells(f"B{pay_row}:E{pay_row}")
     ws[f"B{pay_row}"].value = "Please Transfer Full Amount to:"
     ws[f"B{pay_row}"].font = bold
@@ -526,7 +506,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws[f"E{box_top}"].alignment = center
     ws[f"E{box_top}"].font = bold
 
-    _set_border_edges(ws, box_top, 5, box_bottom, 7, thin=True)
+    _border_edges(ws, box_top, 5, box_bottom, 7, style="medium")
 
     footer_row = box_bottom + 2
     ws.merge_cells(f"B{footer_row}:G{footer_row}")
