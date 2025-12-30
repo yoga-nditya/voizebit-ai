@@ -21,14 +21,12 @@ from quotation import handle_quotation_flow
 from invoice import handle_invoice_flow
 from mou import handle_mou_flow
 
-
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = FLASK_SECRET_KEY
 
 # state memory per session
 conversations = {}
 init_db()
-
 
 @app.after_request
 def add_cors_headers(resp):
@@ -37,11 +35,9 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     return resp
 
-
 @app.route("/")
 def index():
     return render_template("index.html")
-
 
 @app.route("/api/history", methods=["GET"])
 def api_history_list():
@@ -51,7 +47,6 @@ def api_history_list():
         return jsonify({"items": items})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/history/<int:history_id>", methods=["GET"])
 def api_history_detail(history_id):
@@ -98,7 +93,6 @@ def api_history_delete(history_id):
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/api/documents", methods=["GET"])
 def api_documents():
