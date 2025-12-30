@@ -21,14 +21,12 @@ from utils import (
 )
 from config_new import FILES_DIR
 
-
 def is_non_b3_input(text: str) -> bool:
     if not text:
         return False
     t = text.strip().lower()
     norm = re.sub(r'[\s\-_]+', '', t)
     return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
-
 
 def normalize_id_number_text(text: str) -> str:
     if not text:
@@ -37,7 +35,6 @@ def normalize_id_number_text(text: str) -> str:
     t = re.sub(r'(?<=\d)[\.,](?=\d{3}(\D|$))', '', t)
     t = re.sub(r'(?<=\d),(?=\d)', '.', t)
     return t
-
 
 def parse_amount_id(text: str) -> int:
     if not text:
@@ -108,7 +105,6 @@ def parse_amount_id(text: str) -> int:
         digits = re.sub(r'\D+', '', str(val))
         return int(digits) if digits else 0
 
-
 def parse_qty_id(text: str) -> float:
     if not text:
         return 0.0
@@ -119,7 +115,6 @@ def parse_qty_id(text: str) -> float:
     except:
         m = re.findall(r'\d+(?:\.\d+)?', t)
         return float(m[0]) if m else 0.0
-
 
 def make_unique_filename_base(base_name: str) -> str:
     base_name = (base_name or "").strip()
@@ -161,7 +156,6 @@ def _invoice_counter_path() -> str:
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "invoice_counter.json")
 
-
 def load_invoice_counter() -> int:
     path = _invoice_counter_path()
     try:
@@ -173,12 +167,10 @@ def load_invoice_counter() -> int:
     except:
         return 0
 
-
 def save_invoice_counter(n: int) -> None:
     path = _invoice_counter_path()
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"counter": int(n)}, f)
-
 
 def get_next_invoice_no() -> str:
     now = datetime.now()
@@ -189,69 +181,61 @@ def get_next_invoice_no() -> str:
 
 
 # =========================
-# Generate Invoice (UPDATED EXCEL LAYOUT ONLY)
+# Generate Invoice (as-is)
 # =========================
 
-def _thin_border():
-    side = Side(style="thin", color="000000")
-    return Border(left=side, right=side, top=side, bottom=side)
+def _thin_side(style="thin"):
+    return Side(style=style, color="000000")
 
-def _medium_border():
-    side = Side(style="medium", color="000000")
-    return Border(left=side, right=side, top=side, bottom=side)
+def _border_all(thin=True):
+    s = _thin_side("thin" if thin else "medium")
+    return Border(left=s, right=s, top=s, bottom=s)
+
+def _border_custom(left=None, right=None, top=None, bottom=None):
+    # left/right/top/bottom: Side or None
+    return Border(left=left, right=right, top=top, bottom=bottom)
 
 def _set_border(ws, r1, c1, r2, c2, border):
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
             ws.cell(r, c).border = border
 
-def _outline_box(ws, r1, c1, r2, c2, inner_border=None, outer_border=None):
-    """
-    inner_border: border untuk grid di dalam
-    outer_border: border untuk garis luar kotak
-    """
-    if inner_border:
-        _set_border(ws, r1, c1, r2, c2, inner_border)
-
-    if not outer_border:
-        return
-
-    # top & bottom
-    for c in range(c1, c2 + 1):
-        ws.cell(r1, c).border = Border(
-            left=ws.cell(r1, c).border.left,
-            right=ws.cell(r1, c).border.right,
-            top=outer_border.top,
-            bottom=ws.cell(r1, c).border.bottom,
-        )
-        ws.cell(r2, c).border = Border(
-            left=ws.cell(r2, c).border.left,
-            right=ws.cell(r2, c).border.right,
-            top=ws.cell(r2, c).border.top,
-            bottom=outer_border.bottom,
-        )
-
-    # left & right
+def _set_border_edges(ws, r1, c1, r2, c2, thin=True):
+    # applies border only on edges of the range, keeps inside unchanged
+    s = _thin_side("thin" if thin else "medium")
     for r in range(r1, r2 + 1):
-        ws.cell(r, c1).border = Border(
-            left=outer_border.left,
-            right=ws.cell(r, c1).border.right,
-            top=ws.cell(r, c1).border.top,
-            bottom=ws.cell(r, c1).border.bottom,
-        )
-        ws.cell(r, c2).border = Border(
-            left=ws.cell(r, c2).border.left,
-            right=outer_border.right,
-            top=ws.cell(r, c2).border.top,
-            bottom=ws.cell(r, c2).border.bottom,
-        )
+        for c in range(c1, c2 + 1):
+            cell = ws.cell(r, c)
+            b = cell.border
+            left = b.left
+            right = b.right
+            top = b.top
+            bottom = b.bottom
+
+            if c == c1:
+                left = s
+            if c == c2:
+                right = s
+            if r == r1:
+                top = s
+            if r == r2:
+                bottom = s
+
+            cell.border = Border(left=left, right=right, top=top, bottom=bottom)
+
+def _set_inner_grid(ws, r1, c1, r2, c2):
+    # grid thin inside a table range
+    s = _thin_side("thin")
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            cell = ws.cell(r, c)
+            cell.border = Border(left=s, right=s, top=s, bottom=s)
 
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb = Workbook()
     ws = wb.active
     ws.title = "Invoice"
 
-    # ===== Page setup (tetap aman, tidak mengganggu layout) =====
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.page_margins.left = 0.35
@@ -259,46 +243,27 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.page_margins.top = 0.35
     ws.page_margins.bottom = 0.35
 
-    # ===== SHIFT START COLUMN =====
-    # Mulai dari kolom C biar agak ketengah (sesuai request)
-    START_COL = 3  # C
+    # =========================================================
+    # SHIFT TO CENTER: start from column B (like your template)
+    # We keep column A as margin
+    # Layout columns used: B..G (6 columns)
+    # B=Qty, C=Unit, D=Date, E=Description, F=Price, G=Amount
+    # =========================================================
+    ws.column_dimensions["A"].width = 3  # margin
+    col_widths = {"B": 8, "C": 6, "D": 12, "E": 45, "F": 14, "G": 16}
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
 
-    def col(n: int) -> int:
-        return START_COL + (n - 1)  # n=1.. -> C..
-
-    def cell_addr(r: int, c: int) -> str:
-        return f"{get_column_letter(c)}{r}"
-
-    def merge(r1, c1, r2, c2):
-        ws.merge_cells(f"{cell_addr(r1, c1)}:{cell_addr(r2, c2)}")
-
-    # ===== Column widths (mirip template screenshot) =====
-    # Struktur 6 kolom utama: Qty | Unit | Date | Description | Price | Amount
-    # (Template kamu memang ada Unit kecil “Kg”)
-    col_widths = {
-        col(1): 7,   # Qty
-        col(2): 5,   # Unit
-        col(3): 12,  # Date
-        col(4): 44,  # Description
-        col(5): 14,  # Price
-        col(6): 16,  # Amount
-    }
-    for c, w in col_widths.items():
-        ws.column_dimensions[get_column_letter(c)].width = w
-
-    # ===== Styles =====
+    # styles
     bold = Font(bold=True)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    left_mid = Alignment(horizontal="left", vertical="center", wrap_text=True)
     right = Alignment(horizontal="right", vertical="center", wrap_text=True)
-
-    thin = _thin_border()
-    medium = _medium_border()
 
     def money(cell):
         cell.number_format = '#,##0'
 
-    # ===== Defaults Payment =====
     payment = inv.get("payment") or {}
     defaults = {
         "beneficiary": "PT. Sarana Trans Bersama Jaya",
@@ -326,152 +291,179 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    # ===== HEADER: Bill To & Ship To =====
-    ws[cell_addr(1, col(1))].value = "Bill To:"
-    ws[cell_addr(1, col(1))].font = bold
-    merge(1, col(1), 1, col(3))
+    # -------------------------
+    # TOP: Bill To / Ship To blocks (no big outer border)
+    # -------------------------
+    ws["B1"].value = "Bill To:"
+    ws["B1"].font = bold
+    ws.merge_cells("B1:D1")
 
-    ws[cell_addr(1, col(4))].value = "Ship To:"
-    ws[cell_addr(1, col(4))].font = bold
-    merge(1, col(4), 1, col(6))
+    ws["E1"].value = "Ship To:"
+    ws["E1"].font = bold
+    ws.merge_cells("E1:G1")
 
-    bill_lines = [(bill_to.get("name") or "").strip(), (bill_to.get("address") or "").strip(), (bill_to.get("address2") or "").strip()]
-    ship_lines = [(ship_to.get("name") or "").strip(), (ship_to.get("address") or "").strip(), (ship_to.get("address2") or "").strip()]
+    bill_lines = [
+        (bill_to.get("name") or "").strip(),
+        (bill_to.get("address") or "").strip(),
+        (bill_to.get("address2") or "").strip()
+    ]
+    ship_lines = [
+        (ship_to.get("name") or "").strip(),
+        (ship_to.get("address") or "").strip(),
+        (ship_to.get("address2") or "").strip()
+    ]
     bill_text = "\n".join([x for x in bill_lines if x])
     ship_text = "\n".join([x for x in ship_lines if x])
 
-    ws[cell_addr(2, col(1))].value = bill_text
-    merge(2, col(1), 3, col(3))
-    ws[cell_addr(2, col(1))].alignment = left
+    ws["B2"].value = bill_text
+    ws.merge_cells("B2:D3")
+    ws["B2"].alignment = left
 
-    ws[cell_addr(2, col(4))].value = ship_text
-    merge(2, col(4), 3, col(6))
-    ws[cell_addr(2, col(4))].alignment = left
+    ws["E2"].value = ship_text
+    ws.merge_cells("E2:G3")
+    ws["E2"].alignment = left
 
-    # Phone / Fax line
-    ws[cell_addr(5, col(1))].value = "Phone:"
-    ws[cell_addr(5, col(1))].font = bold
-    merge(5, col(1), 5, col(2))
-    ws[cell_addr(5, col(3))].value = phone
-    ws[cell_addr(5, col(3))].alignment = left
+    ws["B5"].value = "Phone:"
+    ws["B5"].font = bold
+    ws.merge_cells("B5:C5")
+    ws["D5"].value = phone
+    ws["D5"].alignment = left_mid
 
-    ws[cell_addr(5, col(4))].value = "Fax:"
-    ws[cell_addr(5, col(4))].font = bold
-    merge(5, col(4), 5, col(5))
-    ws[cell_addr(5, col(6))].value = fax
-    ws[cell_addr(5, col(6))].alignment = left
+    ws["E5"].value = "Fax:"
+    ws["E5"].font = bold
+    ws.merge_cells("E5:F5")
+    ws["G5"].value = fax
+    ws["G5"].alignment = left_mid
 
-    # Attn
-    ws[cell_addr(7, col(1))].value = "Attn :"
-    ws[cell_addr(7, col(1))].font = bold
-    merge(7, col(1), 7, col(2))
-    ws[cell_addr(7, col(3))].value = attn
-    merge(7, col(3), 7, col(4))
-    ws[cell_addr(7, col(3))].alignment = left
+    ws["B7"].value = "Attn :"
+    ws["B7"].font = bold
+    ws.merge_cells("B7:C7")
+    ws["D7"].value = attn
+    ws.merge_cells("D7:E7")
+    ws["D7"].alignment = left_mid
 
-    # Invoice box kanan (Invoice, Date, No Surat Jalan)
-    ws[cell_addr(6, col(5))].value = "Invoice"
-    ws[cell_addr(6, col(5))].font = bold
-    ws[cell_addr(6, col(5))].alignment = right
-    ws[cell_addr(6, col(6))].value = invoice_no
-    ws[cell_addr(6, col(6))].alignment = left
+    # Right small block (Invoice / Date / No Surat Jalan) like template
+    ws["F6"].value = "Invoice"
+    ws["F6"].font = bold
+    ws["F6"].alignment = right
+    ws["G6"].value = invoice_no
+    ws["G6"].alignment = left_mid
 
-    ws[cell_addr(7, col(5))].value = "Date"
-    ws[cell_addr(7, col(5))].font = bold
-    ws[cell_addr(7, col(5))].alignment = right
-    ws[cell_addr(7, col(6))].value = inv_date
-    ws[cell_addr(7, col(6))].alignment = left
+    ws["F7"].value = "Date"
+    ws["F7"].font = bold
+    ws["F7"].alignment = right
+    ws["G7"].value = inv_date
+    ws["G7"].alignment = left_mid
 
-    ws[cell_addr(8, col(5))].value = "No. Surat Jalan"
-    ws[cell_addr(8, col(5))].font = bold
-    ws[cell_addr(8, col(5))].alignment = right
-    ws[cell_addr(8, col(6))].value = no_surat_jalan
-    ws[cell_addr(8, col(6))].alignment = left
+    ws["E8"].value = "No. Surat Jalan"
+    ws["E8"].font = bold
+    ws["E8"].alignment = right
+    ws.merge_cells("E8:F8")
+    ws["G8"].value = no_surat_jalan
+    ws["G8"].alignment = left_mid
 
-    # ===== REF ROW (bordered block starts here) =====
-    ref_header_row = 10
-    ref_value_row = 11
+    # -------------------------
+    # Ref / Sales / Ship / Terms table (THIS IS INSIDE BORDERED AREA)
+    # Like your template: from row 10..12 with thin borders
+    # -------------------------
+    # Header
+    ws.merge_cells("B10:C10")
+    ws["B10"].value = "Ref No."
+    ws["B10"].font = bold
+    ws["B10"].alignment = center
 
-    # Ref header cells: (Ref No | Sales Person | Ship Via | Ship Date | Terms)
-    # kita pakai 6 kolom utama, tapi Terms kita gabungkan 2 kolom terakhir (Price+Amount) supaya proporsi mirip template
-    # Kolom mapping:
-    # RefNo: col1-2 (Qty+Unit)
-    # Sales: col3-4 (Date+Desc)
-    # ShipVia: col5 (Price)
-    # ShipDate: col6 (Amount) -> kita pakai, dan Terms row dibawahnya merge supaya rapi
+    ws.merge_cells("D10:E10")
+    ws["D10"].value = "Sales Person"
+    ws["D10"].font = bold
+    ws["D10"].alignment = center
 
-    # Header labels
-    merge(ref_header_row, col(1), ref_header_row, col(2))
-    ws[cell_addr(ref_header_row, col(1))].value = "Ref No."
-    ws[cell_addr(ref_header_row, col(1))].font = bold
-    ws[cell_addr(ref_header_row, col(1))].alignment = center
+    ws["F10"].value = "Ship Via"
+    ws["F10"].font = bold
+    ws["F10"].alignment = center
 
-    merge(ref_header_row, col(3), ref_header_row, col(4))
-    ws[cell_addr(ref_header_row, col(3))].value = "Sales Person"
-    ws[cell_addr(ref_header_row, col(3))].font = bold
-    ws[cell_addr(ref_header_row, col(3))].alignment = center
+    ws["G10"].value = "Ship Date"
+    ws["G10"].font = bold
+    ws["G10"].alignment = center
 
-    ws[cell_addr(ref_header_row, col(5))].value = "Ship Via"
-    ws[cell_addr(ref_header_row, col(5))].font = bold
-    ws[cell_addr(ref_header_row, col(5))].alignment = center
+    ws.merge_cells("F11:G11")
+    ws["F11"].value = "Terms"
+    ws["F11"].font = bold
+    ws["F11"].alignment = center
 
-    ws[cell_addr(ref_header_row, col(6))].value = "Ship Date"
-    ws[cell_addr(ref_header_row, col(6))].font = bold
-    ws[cell_addr(ref_header_row, col(6))].alignment = center
+    # Values row
+    ws.merge_cells("B11:C11")
+    ws["B11"].value = ref_no
+    ws["B11"].alignment = center
 
-    # Terms row (di template Terms ada di baris yang sama dengan Ship Date header area)
-    # Kita buat Terms di header row juga dengan merge area kecil di kanan (pakai col6 saja sudah sempit).
-    # Agar mirip, kita taruh Terms label di baris header tapi posisinya tetap sisi kanan area header.
-    # (Kalau kamu mau Terms benar-benar kotak terpisah 1 kolom lagi, harus tambah kolom ekstra)
-    # Di sini kita tetap mengikuti 6 kolom supaya tidak merusak struktur invoice kamu.
-    # Jadi Terms value tetap ada di bawah, tapi label "Terms" sudah ada.
-    # NOTE: Untuk benar-benar 100% sama, perlu 1 kolom ekstra.
+    ws.merge_cells("D11:E11")
+    ws["D11"].value = sales_person
+    ws["D11"].alignment = center
 
-    # Values
-    merge(ref_value_row, col(1), ref_value_row, col(2))
-    ws[cell_addr(ref_value_row, col(1))].value = ref_no
-    ws[cell_addr(ref_value_row, col(1))].alignment = center
+    ws["F10"].alignment = center
+    ws["G10"].alignment = center
 
-    merge(ref_value_row, col(3), ref_value_row, col(4))
-    ws[cell_addr(ref_value_row, col(3))].value = sales_person
-    ws[cell_addr(ref_value_row, col(3))].alignment = center
+    ws["F11"].alignment = center
+    ws["F12"].alignment = center
 
-    ws[cell_addr(ref_value_row, col(5))].value = ship_via
-    ws[cell_addr(ref_value_row, col(5))].alignment = center
+    ws["F12"].value = terms
+    ws.merge_cells("F12:G12")
+    ws["F12"].alignment = center
 
-    ws[cell_addr(ref_value_row, col(6))].value = ship_date
-    ws[cell_addr(ref_value_row, col(6))].alignment = center
+    ws["F11"].alignment = center
+    ws["F12"].alignment = center
 
-    # Terms label/value (tetap pakai area kanan bawah dekat ship date sesuai template)
-    terms_label_row = 12
-    terms_value_row = 13
+    ws["F10"].alignment = center
+    ws["G10"].alignment = center
 
-    merge(terms_label_row, col(5), terms_label_row, col(6))
-    ws[cell_addr(terms_label_row, col(5))].value = "Terms"
-    ws[cell_addr(terms_label_row, col(5))].font = bold
-    ws[cell_addr(terms_label_row, col(5))].alignment = center
+    ws["F11"].alignment = center
 
-    merge(terms_value_row, col(5), terms_value_row, col(6))
-    ws[cell_addr(terms_value_row, col(5))].value = terms
-    ws[cell_addr(terms_value_row, col(5))].alignment = center
+    ws["F12"].alignment = center
 
-    # ===== ITEMS TABLE =====
-    item_header_row = 15
-    ws[cell_addr(item_header_row, col(1))].value = "Qty"
-    ws[cell_addr(item_header_row, col(2))].value = ""  # unit (Kg)
-    ws[cell_addr(item_header_row, col(3))].value = "Date"
-    ws[cell_addr(item_header_row, col(4))].value = "Description"
-    ws[cell_addr(item_header_row, col(5))].value = "Price"
-    ws[cell_addr(item_header_row, col(6))].value = "Amount (IDR)"
+    ws["F10"].alignment = center
+    ws["G10"].alignment = center
 
-    for i in range(1, 7):
-        ws[cell_addr(item_header_row, col(i))].font = bold
-        ws[cell_addr(item_header_row, col(i))].alignment = center
+    ws["F11"].alignment = center
+
+    # Fill Ship Via / Ship Date cells (row 11 for via/date)
+    ws["F11"].value = ship_via
+    ws["F11"].alignment = center
+    # Ship date in G11 is taken by merge, so place at G10? we keep ship date in G11 is not possible.
+    # Keep ship date in G11 by using row 11 before the merge for terms. Your template shows ship date under Ship Date column.
+    # So we place ship date in G11 by unmerging terms header already at F11:G11, and keep Terms only at F12:G12.
+    # To preserve your template look: Ship Via/Ship Date row is 11, Terms header row is 10 already shown in template row 2 screenshot.
+    # We'll correct: Terms header is at F10:G10? No, you showed Terms as last column in header row.
+    # So we simplify: Terms is column G, not merged.
+    # --- Minimal fix: write terms in G12 and ship date in G11
+    ws.unmerge_cells("F11:G11")
+    ws["G10"].value = "Terms"
+    ws["G10"].font = bold
+    ws["G10"].alignment = center
+
+    ws["G11"].value = ship_date
+    ws["G11"].alignment = center
+    ws["G12"].value = terms
+    ws["G12"].alignment = center
+
+    # Apply border only on this ref block: B10..G12
+    _set_inner_grid(ws, 10, 2, 12, 7)
+
+    # -------------------------
+    # Items header (inside bordered table area)
+    # Table main: Qty..Amount (B14..G??)
+    # -------------------------
+    ws["B14"].value = "Qty"
+    ws["C14"].value = ""
+    ws["D14"].value = "Date"
+    ws["E14"].value = "Description"
+    ws["F14"].value = "Price"
+    ws["G14"].value = "Amount (IDR)"
+    for c in ["B", "C", "D", "E", "F", "G"]:
+        ws[f"{c}14"].font = bold
+        ws[f"{c}14"].alignment = center
 
     items = inv.get("items") or []
-    r = item_header_row + 1
+    r = 15
     subtotal = 0
-
     for it in items:
         qty = float(it.get("qty") or 0)
         unit = (it.get("unit") or "").strip()
@@ -481,36 +473,42 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         amount = int(round(qty * price))
         subtotal += amount
 
-        ws[cell_addr(r, col(1))].value = qty if qty % 1 != 0 else int(qty)
-        ws[cell_addr(r, col(1))].alignment = center
+        ws[f"B{r}"].value = qty if qty % 1 != 0 else int(qty)
+        ws[f"B{r}"].alignment = center
 
-        ws[cell_addr(r, col(2))].value = unit
-        ws[cell_addr(r, col(2))].alignment = center
+        ws[f"C{r}"].value = unit
+        ws[f"C{r}"].alignment = center
 
-        ws[cell_addr(r, col(3))].value = line_date
-        ws[cell_addr(r, col(3))].alignment = center
+        ws[f"D{r}"].value = line_date
+        ws[f"D{r}"].alignment = center
 
-        ws[cell_addr(r, col(4))].value = desc
-        ws[cell_addr(r, col(4))].alignment = left
+        ws[f"E{r}"].value = desc
+        ws[f"E{r}"].alignment = left
 
-        ws[cell_addr(r, col(5))].value = price
-        ws[cell_addr(r, col(5))].alignment = right
-        money(ws[cell_addr(r, col(5))])
+        ws[f"F{r}"].value = price
+        ws[f"F{r}"].alignment = right
+        money(ws[f"F{r}"])
 
-        ws[cell_addr(r, col(6))].value = amount
-        ws[cell_addr(r, col(6))].alignment = right
-        money(ws[cell_addr(r, col(6))])
+        ws[f"G{r}"].value = amount
+        ws[f"G{r}"].alignment = right
+        money(ws[f"G{r}"])
 
         r += 1
 
-    # Minimal rows untuk area kosong (agar seperti template)
+    # Template has empty rows; keep minimal last row like your previous logic
     min_last_row = 26
     if r < min_last_row:
         r = min_last_row
 
-    last_item_row = r - 1
+    # BORDERED TABLE ONLY: from Ref table and items area should be bordered
+    # Ref table already bordered. Now border items table range:
+    # B14..G(r-1)
+    _set_inner_grid(ws, 14, 2, r - 1, 7)
 
-    # ===== TOTALS =====
+    # -------------------------
+    # Totals area: labels NOT boxed; ONLY amount column boxed like template
+    # Place at columns F (label) and G (amount)
+    # -------------------------
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
     deposit = int(inv.get("deposit") or 0)
@@ -519,10 +517,9 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ppn = int(round(total_before_ppn * ppn_rate))
     balance = total_before_ppn + ppn - deposit
 
-    sum_row = r  # mulai setelah items table
-
-    # Label di kolom Price (col5), angka di Amount (col6)
-    totals = [
+    sum_row = r
+    # Labels in F, amounts in G
+    labels = [
         ("Total", subtotal, True),
         ("Freight", freight, False),
         ("Total", total_before_ppn, True),
@@ -530,101 +527,78 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ("Less: Deposit", deposit, False),
         ("Balance Due", balance, True),
     ]
+    for i, (lab, val, is_bold) in enumerate(labels):
+        rr = sum_row + i
+        ws[f"F{rr}"].value = lab
+        ws[f"F{rr}"].alignment = right
+        ws[f"F{rr}"].font = Font(bold=is_bold)
 
-    for idx, (label, value, is_bold) in enumerate(totals):
-        rr = sum_row + idx
-        ws[cell_addr(rr, col(5))].value = label
-        ws[cell_addr(rr, col(5))].alignment = right
-        ws[cell_addr(rr, col(5))].font = Font(bold=is_bold)
+        ws[f"G{rr}"].value = val
+        ws[f"G{rr}"].alignment = right
+        ws[f"G{rr}"].font = Font(bold=is_bold)
+        money(ws[f"G{rr}"])
 
-        ws[cell_addr(rr, col(6))].value = value
-        ws[cell_addr(rr, col(6))].alignment = right
-        ws[cell_addr(rr, col(6))].font = Font(bold=is_bold)
-        money(ws[cell_addr(rr, col(6))])
+    # Border ONLY on amount column G for totals (like screenshot)
+    s = _thin_side("thin")
+    for i in range(len(labels)):
+        rr = sum_row + i
+        # top border on first, bottom on last
+        top = s if i == 0 else None
+        bottom = s if i == len(labels) - 1 else None
+        # left/right always
+        ws[f"G{rr}"].border = Border(left=s, right=s, top=top or s, bottom=bottom or s)
 
-    # ===== PAYMENT TEXT (tanpa box border tegas, sesuai request “yang lain tidak perlu dibungkus”) =====
+    # -------------------------
+    # Payment block left bottom (no outer big box, just like template lines)
+    # -------------------------
     pay_row = sum_row
-    ws[cell_addr(pay_row, col(1))].value = "Please Transfer Full Amount to:"
-    ws[cell_addr(pay_row, col(1))].font = bold
-    merge(pay_row, col(1), pay_row, col(4))
-    ws[cell_addr(pay_row, col(1))].alignment = left
+    ws.merge_cells(f"B{pay_row}:E{pay_row}")
+    ws[f"B{pay_row}"].value = "Please Transfer Full Amount to:"
+    ws[f"B{pay_row}"].font = bold
+    ws[f"B{pay_row}"].alignment = left_mid
 
-    ws[cell_addr(pay_row + 1, col(1))].value = "Beneficiary  :"
-    ws[cell_addr(pay_row + 2, col(1))].value = "Bank Name    :"
-    ws[cell_addr(pay_row + 3, col(1))].value = "Branch       :"
-    ws[cell_addr(pay_row + 4, col(1))].value = "IDR Acct     :"
+    ws[f"B{pay_row+1}"].value = "Beneficiary  :"
+    ws[f"C{pay_row+1}"].value = payment["beneficiary"]
+    ws.merge_cells(f"C{pay_row+1}:E{pay_row+1}")
+    ws[f"C{pay_row+1}"].alignment = left_mid
 
-    ws[cell_addr(pay_row + 1, col(2))].value = payment["beneficiary"]
-    ws[cell_addr(pay_row + 2, col(2))].value = payment["bank_name"]
-    ws[cell_addr(pay_row + 3, col(2))].value = payment["branch"]
-    ws[cell_addr(pay_row + 4, col(2))].value = payment["idr_acct"]
+    ws[f"B{pay_row+2}"].value = "Bank Name    :"
+    ws[f"C{pay_row+2}"].value = payment["bank_name"]
+    ws.merge_cells(f"C{pay_row+2}:E{pay_row+2}")
+    ws[f"C{pay_row+2}"].alignment = left_mid
 
-    merge(pay_row + 1, col(2), pay_row + 1, col(4))
-    merge(pay_row + 2, col(2), pay_row + 2, col(4))
-    merge(pay_row + 3, col(2), pay_row + 3, col(4))
-    merge(pay_row + 4, col(2), pay_row + 4, col(4))
+    ws[f"B{pay_row+3}"].value = "Branch       :"
+    ws[f"C{pay_row+3}"].value = payment["branch"]
+    ws.merge_cells(f"C{pay_row+3}:E{pay_row+3}")
+    ws[f"C{pay_row+3}"].alignment = left_mid
 
-    # ===== BORDERS (SESUI TEMPLATE REQUEST) =====
-    # 1) Kotak tegas hanya untuk area Ref->Terms dan Items table sampai Amount
-    #    Area ini mencakup:
-    #    - ref header/value (row 10-11)
-    #    - terms box (row 12-13) di kolom 5-6
-    #    - items header + items rows (row 15..last_item_row)
-    # Outer border medium, inner border thin.
-    ref_items_top = ref_header_row
-    ref_items_bottom = last_item_row
-    ref_items_left = col(1)
-    ref_items_right = col(6)
+    ws[f"B{pay_row+4}"].value = "IDR Acct     :"
+    ws[f"C{pay_row+4}"].value = payment["idr_acct"]
+    ws.merge_cells(f"C{pay_row+4}:E{pay_row+4}")
+    ws[f"C{pay_row+4}"].alignment = left_mid
 
-    _outline_box(
-        ws,
-        ref_items_top,
-        ref_items_left,
-        ref_items_bottom,
-        ref_items_right,
-        inner_border=thin,
-        outer_border=medium
-    )
+    # -------------------------
+    # Bottom right box + footer text (like your image 3)
+    # -------------------------
+    # Put box under totals area
+    box_top = pay_row + 8
+    box_bottom = box_top + 6
 
-    # Terms box: ikut style kotak di header area (thin inner, medium outline)
-    _outline_box(
-        ws,
-        terms_label_row,
-        col(5),
-        terms_value_row,
-        col(6),
-        inner_border=thin,
-        outer_border=medium
-    )
+    # Box range: E..G (start from E to G) to resemble template right-lower area
+    ws.merge_cells(f"E{box_top}:G{box_top}")
+    ws[f"E{box_top}"].value = "PT. Sarana Trans Bersama Jaya"
+    ws[f"E{box_top}"].alignment = center
+    ws[f"E{box_top}"].font = bold
 
-    # Garis pemisah kuat antara header items dan body (mirip template)
-    for c in range(ref_items_left, ref_items_right + 1):
-        ws.cell(item_header_row, c).border = Border(
-            left=ws.cell(item_header_row, c).border.left,
-            right=ws.cell(item_header_row, c).border.right,
-            top=ws.cell(item_header_row, c).border.top,
-            bottom=medium.bottom,  # garis bawah header lebih tegas
-        )
+    # draw thick-ish (still thin in openpyxl) border around the box
+    _set_border_edges(ws, box_top, 5, box_bottom, 7, thin=True)
 
-    # 2) TOTALS: hanya angka (kolom Amount) yang diborder (sesuai screenshot kamu)
-    totals_top = sum_row
-    totals_bottom = sum_row + len(totals) - 1
+    # footer line text centered under box
+    footer_row = box_bottom + 2
+    ws.merge_cells(f"B{footer_row}:G{footer_row}")
+    ws[f"B{footer_row}"].value = "Please kindly fax to our attention upon receipt"
+    ws[f"B{footer_row}"].alignment = center
 
-    for rr in range(totals_top, totals_bottom + 1):
-        ws.cell(rr, col(6)).border = thin  # hanya kolom angka
-
-    # Biar terlihat seperti “kolom angka dibox” (outline medium di kolom amount saja)
-    _outline_box(
-        ws,
-        totals_top,
-        col(6),
-        totals_bottom,
-        col(6),
-        inner_border=thin,
-        outer_border=medium
-    )
-
-    # ===== Save =====
     try:
         folder = str(FILES_DIR)
     except Exception:
@@ -635,8 +609,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb.save(out_path)
     return f"{fname_base}.xlsx"
 
-
-# ========= PDF generator (as-is) =========
 def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     try:
         folder = str(FILES_DIR)
@@ -784,7 +756,7 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
 
 
 # =========================
-# CHAT HANDLER INVOICE (as-is)
+# CHAT HANDLER INVOICE
 # =========================
 
 def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict, conversations: dict, history_id_in):
@@ -794,6 +766,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
       - dict response jika handled
     """
 
+    # trigger invoice (sama)
     if (("invoice" in lower) or ("faktur" in lower)) and (state.get("step") == "idle"):
         inv_no = get_next_invoice_no()
         state["step"] = "inv_billto_name"
@@ -851,6 +824,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
         return {"text": out_text, "history_id": history_id_created or history_id_in}
 
+    # step-step invoice (sama)
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
 
@@ -911,6 +885,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         return {"text": out_text, "history_id": history_id_in}
 
     if state.get("step") == "inv_phone":
+        # keep original behavior
         state["data"]["phone"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_fax"
         conversations[sid] = state
@@ -1110,7 +1085,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             f"✅ Bill To: <b>{(state['data'].get('bill_to') or {}).get('name','')}</b><br>"
             f"✅ Total Item: <b>{len(state['data'].get('items') or [])}</b><br><br>"
             "📌 Preview: PDF<br>"
-            "📌 Download: Excel (.xlsx)"
+            "📌 Download: Excel (.xlsx) / PDF"
         )
 
         db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
