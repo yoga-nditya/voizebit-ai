@@ -21,12 +21,14 @@ from utils import (
 )
 from config_new import FILES_DIR
 
+
 def is_non_b3_input(text: str) -> bool:
     if not text:
         return False
     t = text.strip().lower()
     norm = re.sub(r'[\s\-_]+', '', t)
     return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
+
 
 def normalize_id_number_text(text: str) -> str:
     if not text:
@@ -35,6 +37,7 @@ def normalize_id_number_text(text: str) -> str:
     t = re.sub(r'(?<=\d)[\.,](?=\d{3}(\D|$))', '', t)
     t = re.sub(r'(?<=\d),(?=\d)', '.', t)
     return t
+
 
 def parse_amount_id(text: str) -> int:
     if not text:
@@ -105,6 +108,7 @@ def parse_amount_id(text: str) -> int:
         digits = re.sub(r'\D+', '', str(val))
         return int(digits) if digits else 0
 
+
 def parse_qty_id(text: str) -> float:
     if not text:
         return 0.0
@@ -115,6 +119,7 @@ def parse_qty_id(text: str) -> float:
     except:
         m = re.findall(r'\d+(?:\.\d+)?', t)
         return float(m[0]) if m else 0.0
+
 
 def make_unique_filename_base(base_name: str) -> str:
     base_name = (base_name or "").strip()
@@ -156,6 +161,7 @@ def _invoice_counter_path() -> str:
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "invoice_counter.json")
 
+
 def load_invoice_counter() -> int:
     path = _invoice_counter_path()
     try:
@@ -167,10 +173,12 @@ def load_invoice_counter() -> int:
     except:
         return 0
 
+
 def save_invoice_counter(n: int) -> None:
     path = _invoice_counter_path()
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"counter": int(n)}, f)
+
 
 def get_next_invoice_no() -> str:
     now = datetime.now()
@@ -181,11 +189,15 @@ def get_next_invoice_no() -> str:
 
 
 # =========================
-# Generate Invoice (ONLY XLSX LAYOUT UPDATED)
+# Generate Invoice (ONLY create_invoice_xlsx changed)
 # =========================
 
 def _thin_border():
     side = Side(style="thin", color="000000")
+    return Border(left=side, right=side, top=side, bottom=side)
+
+def _medium_border():
+    side = Side(style="medium", color="000000")
     return Border(left=side, right=side, top=side, bottom=side)
 
 def _set_border(ws, r1, c1, r2, c2, border):
@@ -193,88 +205,67 @@ def _set_border(ws, r1, c1, r2, c2, border):
         for c in range(c1, c2 + 1):
             ws.cell(r, c).border = border
 
+
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     """
-    Layout dibuat mirip screenshot:
-    - Start dari kolom C (biar lebih ke tengah)
-    - Blok Bill To / Ship To
-    - Header Invoice kanan (Invoice No, Date, No Surat Jalan)
-    - Header bar: Ref No / Sales Person / Ship Via / Ship Date / Terms
-    - Table item: Qty | Unit | Date | Description | Price | Amount (IDR)
-    - Summary kanan bawah (Total, Freight, Total, PPN, Deposit, Balance Due)
-    - Blok Please Transfer Full Amount to
+    PERBAIKAN:
+    - Layout mulai dari kolom C (lebih ke tengah)
+    - Struktur & blok tabel dibuat mirip screenshot user (100% mendekati)
+    - Area kosong tetap terlihat karena gridlines ON
+    - Excel format angka tetap angka (number_format #,##0)
     """
-
     wb = Workbook()
     ws = wb.active
     ws.title = "Invoice"
 
-    # Page setup supaya lebih mirip (fit 1 halaman lebar)
+    # Page setup
     ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-
     ws.page_margins.left = 0.25
     ws.page_margins.right = 0.25
     ws.page_margins.top = 0.25
     ws.page_margins.bottom = 0.25
 
-    # === SHIFT KE KANAN: mulai dari kolom C ===
-    SHIFT = 2  # A,B kosong -> mulai C
-    def C(col_letter: str) -> str:
-        """Map 'A'.. ke kolom yang sudah digeser (A->C, B->D, dst)."""
-        base = ord(col_letter.upper()) - ord("A") + 1
-        return get_column_letter(base + SHIFT)
+    # Gridline ON (penting supaya area kosong mirip gambar)
+    ws.sheet_view.showGridLines = True
 
-    def cell(addr: str) -> str:
-        """addr misal 'A1' -> jadi 'C1' kalau SHIFT=2"""
-        m = re.match(r"^([A-Z]+)(\d+)$", addr.upper().strip())
-        if not m:
-            return addr
-        col, row = m.group(1), m.group(2)
-        # konversi col multi-letter ke index
-        idx = 0
-        for ch in col:
-            idx = idx * 26 + (ord(ch) - ord("A") + 1)
-        idx += SHIFT
-        return f"{get_column_letter(idx)}{row}"
+    # ===== SHIFT ke tengah =====
+    START_COL = 3  # C (kalau mau lebih tengah lagi, ubah jadi 4 => D)
 
-    # Lebarin area kosong kiri (A,B) biar benar-benar “ketengah”
-    ws.column_dimensions["A"].width = 2.2
-    ws.column_dimensions["B"].width = 2.2
+    def C(n: int) -> int:
+        return START_COL + (n - 1)
 
-    # Lebar kolom utama (yang tadinya A..F)
+    # Lebar kolom kerja (C..K) mirip layout screenshot
     col_widths = {
-        C("A"): 8,   # Qty
-        C("B"): 6,   # Unit
-        C("C"): 12,  # Date
-        C("D"): 45,  # Description
-        C("E"): 14,  # Price
-        C("F"): 16,  # Amount (IDR)
+        C(1): 6.5,   # Qty
+        C(2): 5.0,   # Unit (kosong header)
+        C(3): 12.0,  # Date
+        C(4): 18.0,  # Desc 1
+        C(5): 18.0,  # Desc 2
+        C(6): 18.0,  # Desc 3
+        C(7): 11.0,  # Price
+        C(8): 11.0,  # Amount part 1
+        C(9): 11.0,  # Amount part 2
     }
-    for col, w in col_widths.items():
-        ws.column_dimensions[col].width = w
+    for col_idx, w in col_widths.items():
+        ws.column_dimensions[get_column_letter(col_idx)].width = w
 
-    # Row height biar mirip grid screenshot
-    for r in range(1, 60):
-        ws.row_dimensions[r].height = 16
-
-    border = _thin_border()
+    # Styles
     bold = Font(bold=True)
-    font_normal = Font(name="Calibri", size=11)
-    font_bold = Font(name="Calibri", size=11, bold=True)
+    normal = Font(bold=False)
 
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left = Alignment(horizontal="left", vertical="top", wrap_text=True)
-    right = Alignment(horizontal="right", vertical="center", wrap_text=True)
     left_mid = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right_mid = Alignment(horizontal="right", vertical="center", wrap_text=True)
 
-    def money(cell_obj):
-        cell_obj.number_format = '#,##0'
+    thin = _thin_border()
+    medium = _medium_border()
 
-    # Defaults payment
+    def money(cell):
+        cell.number_format = '#,##0'
+
+    # Data defaults (as-is)
     payment = inv.get("payment") or {}
     defaults = {
         "beneficiary": "PT. Sarana Trans Bersama Jaya",
@@ -302,284 +293,226 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    # ========= Header Bill To / Ship To =========
-    ws[cell("A1")].value = "Bill To:"
-    ws[cell("A1")].font = font_bold
-    ws.merge_cells(f"{cell('A1')}:{cell('C1')}")
+    # ====== HEADER: Bill/Ship block (mirip gambar) ======
+    # Bill block: C..F (C(1)..C(4))
+    # Ship block: G..K (C(5)..C(9))
+    r = 1
 
-    ws[cell("D1")].value = "Ship To:"
-    ws[cell("D1")].font = font_bold
-    ws.merge_cells(f"{cell('D1')}:{cell('F1')}")
+    ws.merge_cells(start_row=r, start_column=C(1), end_row=r, end_column=C(4))
+    ws.cell(r, C(1)).value = "Bill To:"
+    ws.cell(r, C(1)).font = bold
+    ws.cell(r, C(1)).alignment = left_mid
 
-    bill_lines = [
-        (bill_to.get("name") or "").strip(),
-        (bill_to.get("address") or "").strip(),
-        (bill_to.get("address2") or "").strip(),
-    ]
-    ship_lines = [
-        (ship_to.get("name") or "").strip(),
-        (ship_to.get("address") or "").strip(),
-        (ship_to.get("address2") or "").strip(),
-    ]
+    ws.merge_cells(start_row=r, start_column=C(5), end_row=r, end_column=C(9))
+    ws.cell(r, C(5)).value = "Ship To:"
+    ws.cell(r, C(5)).font = bold
+    ws.cell(r, C(5)).alignment = left_mid
+
+    # Bill & Ship text rows (2-4)
+    bill_lines = [(bill_to.get("name") or "").strip(), (bill_to.get("address") or "").strip(), (bill_to.get("address2") or "").strip()]
+    ship_lines = [(ship_to.get("name") or "").strip(), (ship_to.get("address") or "").strip(), (ship_to.get("address2") or "").strip()]
     bill_text = "\n".join([x for x in bill_lines if x])
     ship_text = "\n".join([x for x in ship_lines if x])
 
-    ws[cell("A2")].value = bill_text
-    ws.merge_cells(f"{cell('A2')}:{cell('C4')}")
-    ws[cell("A2")].alignment = left
-    ws[cell("A2")].font = font_normal
+    ws.merge_cells(start_row=2, start_column=C(1), end_row=4, end_column=C(4))
+    ws.cell(2, C(1)).value = bill_text
+    ws.cell(2, C(1)).alignment = left
 
-    ws[cell("D2")].value = ship_text
-    ws.merge_cells(f"{cell('D2')}:{cell('F4')}")
-    ws[cell("D2")].alignment = left
-    ws[cell("D2")].font = font_normal
+    ws.merge_cells(start_row=2, start_column=C(5), end_row=4, end_column=C(9))
+    ws.cell(2, C(5)).value = ship_text
+    ws.cell(2, C(5)).alignment = left
 
-    # Phone / Fax row
-    ws[cell("A6")].value = "Phone:"
-    ws[cell("A6")].font = font_bold
-    ws.merge_cells(f"{cell('A6')}:{cell('B6')}")
-    ws[cell("C6")].value = phone
-    ws[cell("C6")].alignment = left_mid
+    # Phone/Fax row (6 like screenshot spacing)
+    ws.merge_cells(start_row=6, start_column=C(1), end_row=6, end_column=C(2))
+    ws.cell(6, C(1)).value = "Phone:"
+    ws.cell(6, C(1)).font = bold
+    ws.cell(6, C(1)).alignment = left_mid
 
-    ws[cell("D6")].value = "Fax:"
-    ws[cell("D6")].font = font_bold
-    ws.merge_cells(f"{cell('D6')}:{cell('E6')}")
-    ws[cell("F6")].value = fax
-    ws[cell("F6")].alignment = left_mid
+    ws.merge_cells(start_row=6, start_column=C(3), end_row=6, end_column=C(4))
+    ws.cell(6, C(3)).value = phone
+    ws.cell(6, C(3)).alignment = left_mid
 
-    # ========= Invoice box kanan =========
-    ws[cell("E8")].value = "Invoice"
-    ws[cell("E8")].font = font_bold
-    ws[cell("E8")].alignment = center
-    ws[cell("F8")].value = invoice_no
-    ws[cell("F8")].alignment = center
+    ws.merge_cells(start_row=6, start_column=C(5), end_row=6, end_column=C(6))
+    ws.cell(6, C(5)).value = "Fax:"
+    ws.cell(6, C(5)).font = bold
+    ws.cell(6, C(5)).alignment = left_mid
 
-    ws[cell("E9")].value = "Date"
-    ws[cell("E9")].font = font_bold
-    ws[cell("E9")].alignment = center
-    ws[cell("F9")].value = inv_date
-    ws[cell("F9")].alignment = center
+    ws.merge_cells(start_row=6, start_column=C(7), end_row=6, end_column=C(9))
+    ws.cell(6, C(7)).value = fax
+    ws.cell(6, C(7)).alignment = left_mid
 
-    ws[cell("E10")].value = "No. Surat Jalan"
-    ws[cell("E10")].font = font_bold
-    ws[cell("E10")].alignment = center
-    ws[cell("F10")].value = no_surat_jalan
-    ws[cell("F10")].alignment = center
+    # Attn row + Invoice/Date/Surat Jalan block kanan
+    ws.merge_cells(start_row=8, start_column=C(1), end_row=8, end_column=C(2))
+    ws.cell(8, C(1)).value = "Attn :"
+    ws.cell(8, C(1)).font = bold
+    ws.cell(8, C(1)).alignment = left_mid
 
-    # ========= Attn row =========
-    ws[cell("A8")].value = "Attn :"
-    ws[cell("A8")].font = font_bold
-    ws.merge_cells(f"{cell('A8')}:{cell('B8')}")
-    ws[cell("C8")].value = attn
-    ws.merge_cells(f"{cell('C8')}:{cell('D8')}")
-    ws[cell("C8")].alignment = left_mid
+    ws.merge_cells(start_row=8, start_column=C(3), end_row=8, end_column=C(4))
+    ws.cell(8, C(3)).value = attn
+    ws.cell(8, C(3)).alignment = left_mid
 
-    # ========= Bar header Ref/Sales/Ship/Terms =========
-    ws.merge_cells(f"{cell('A12')}:{cell('B12')}")
-    ws[cell("A12")].value = "Ref No."
-    ws[cell("A12")].font = font_bold
-    ws[cell("A12")].alignment = center
+    # Invoice No (row 7-8 block kanan)
+    ws.merge_cells(start_row=7, start_column=C(7), end_row=7, end_column=C(8))
+    ws.cell(7, C(7)).value = "Invoice"
+    ws.cell(7, C(7)).font = bold
+    ws.cell(7, C(7)).alignment = right_mid
 
-    ws.merge_cells(f"{cell('C12')}:{cell('D12')}")
-    ws[cell("C12")].value = "Sales Person"
-    ws[cell("C12")].font = font_bold
-    ws[cell("C12")].alignment = center
+    ws.merge_cells(start_row=7, start_column=C(9), end_row=7, end_column=C(9))
+    ws.cell(7, C(9)).value = invoice_no
+    ws.cell(7, C(9)).alignment = center
 
-    ws[cell("E12")].value = "Ship Via"
-    ws[cell("E12")].font = font_bold
-    ws[cell("E12")].alignment = center
+    ws.merge_cells(start_row=8, start_column=C(7), end_row=8, end_column=C(8))
+    ws.cell(8, C(7)).value = "Date"
+    ws.cell(8, C(7)).font = bold
+    ws.cell(8, C(7)).alignment = right_mid
 
-    ws[cell("F12")].value = "Ship Date"
-    ws[cell("F12")].font = font_bold
-    ws[cell("F12")].alignment = center
+    ws.merge_cells(start_row=8, start_column=C(9), end_row=8, end_column=C(9))
+    ws.cell(8, C(9)).value = inv_date
+    ws.cell(8, C(9)).alignment = center
 
-    # Terms header (gabung seperti screenshot kanan)
-    ws.merge_cells(f"{cell('E13')}:{cell('F13')}")
-    ws[cell("E13")].value = "Terms"
-    ws[cell("E13")].font = font_bold
-    ws[cell("E13")].alignment = center
+    ws.merge_cells(start_row=9, start_column=C(7), end_row=9, end_column=C(8))
+    ws.cell(9, C(7)).value = "No. Surat Jalan"
+    ws.cell(9, C(7)).font = bold
+    ws.cell(9, C(7)).alignment = right_mid
 
-    # Values row
-    ws.merge_cells(f"{cell('A13')}:{cell('B13')}")
-    ws[cell("A13")].value = ref_no
-    ws[cell("A13")].alignment = center
+    ws.merge_cells(start_row=9, start_column=C(9), end_row=9, end_column=C(9))
+    ws.cell(9, C(9)).value = no_surat_jalan
+    ws.cell(9, C(9)).alignment = center
 
-    ws.merge_cells(f"{cell('C13')}:{cell('D13')}")
-    ws[cell("C13")].value = sales_person
-    ws[cell("C13")].alignment = center
+    # Border block header area (1..9 rows, C..K)
+    _set_border(ws, 1, C(1), 9, C(9), thin)
 
-    ws[cell("E13")].alignment = center  # already merged
+    # ===== Ref/Sales/Ship/Terms header table =====
+    # Row 11 header
+    hdr_r = 11
+    # Ref No (C..D)
+    ws.merge_cells(start_row=hdr_r, start_column=C(1), end_row=hdr_r, end_column=C(2))
+    ws.cell(hdr_r, C(1)).value = "Ref No."
+    ws.cell(hdr_r, C(1)).font = bold
+    ws.cell(hdr_r, C(1)).alignment = center
 
-    ws[cell("E12")].alignment = center
-    ws[cell("F12")].alignment = center
+    # Sales Person (E..F)
+    ws.merge_cells(start_row=hdr_r, start_column=C(3), end_row=hdr_r, end_column=C(4))
+    ws.cell(hdr_r, C(3)).value = "Sales Person"
+    ws.cell(hdr_r, C(3)).font = bold
+    ws.cell(hdr_r, C(3)).alignment = center
 
-    ws[cell("E13")].alignment = center
-    ws.merge_cells(f"{cell('E14')}:{cell('F14')}")
-    ws[cell("E14")].value = terms
-    ws[cell("E14")].alignment = center
+    # Ship Via (G)
+    ws.merge_cells(start_row=hdr_r, start_column=C(5), end_row=hdr_r, end_column=C(6))
+    ws.cell(hdr_r, C(5)).value = "Ship Via"
+    ws.cell(hdr_r, C(5)).font = bold
+    ws.cell(hdr_r, C(5)).alignment = center
 
-    ws.merge_cells(f"{cell('E13')}:{cell('F13')}")  # keep
+    # Ship Date (H)
+    ws.merge_cells(start_row=hdr_r, start_column=C(7), end_row=hdr_r, end_column=C(7))
+    ws.cell(hdr_r, C(7)).value = "Ship Date"
+    ws.cell(hdr_r, C(7)).font = bold
+    ws.cell(hdr_r, C(7)).alignment = center
 
-    # Ship values row (row 13) for E/F
-    ws[cell("E13")].value = "Terms"  # keep header
-    ws[cell("F12")].value = "Ship Date"  # keep header (safety)
-    ws[cell("E13")].font = font_bold
-    ws[cell("E13")].alignment = center
+    # Terms (I..K)
+    ws.merge_cells(start_row=hdr_r, start_column=C(8), end_row=hdr_r, end_column=C(9))
+    ws.cell(hdr_r, C(8)).value = "Terms"
+    ws.cell(hdr_r, C(8)).font = bold
+    ws.cell(hdr_r, C(8)).alignment = center
 
-    ws[cell("E12")].value = "Ship Via"
-    ws[cell("F12")].value = "Ship Date"
+    # Row 12 values
+    val_r = 12
+    ws.merge_cells(start_row=val_r, start_column=C(1), end_row=val_r, end_column=C(2))
+    ws.cell(val_r, C(1)).value = ref_no
+    ws.cell(val_r, C(1)).alignment = center
 
-    ws[cell("E13")].value = "Terms"
-    ws.merge_cells(f"{cell('E14')}:{cell('F14')}")
-    ws[cell("E14")].value = terms
-    ws[cell("E14")].alignment = center
+    ws.merge_cells(start_row=val_r, start_column=C(3), end_row=val_r, end_column=C(4))
+    ws.cell(val_r, C(3)).value = sales_person
+    ws.cell(val_r, C(3)).alignment = center
 
-    ws[cell("E13")].alignment = center
+    ws.merge_cells(start_row=val_r, start_column=C(5), end_row=val_r, end_column=C(6))
+    ws.cell(val_r, C(5)).value = ship_via
+    ws.cell(val_r, C(5)).alignment = center
 
-    ws[cell("E13")].font = font_bold
-    ws[cell("E12")].font = font_bold
-    ws[cell("F12")].font = font_bold
+    ws.merge_cells(start_row=val_r, start_column=C(7), end_row=val_r, end_column=C(7))
+    ws.cell(val_r, C(7)).value = ship_date
+    ws.cell(val_r, C(7)).alignment = center
 
-    ws[cell("E13")].alignment = center
-    ws[cell("E12")].alignment = center
-    ws[cell("F12")].alignment = center
+    ws.merge_cells(start_row=val_r, start_column=C(8), end_row=val_r, end_column=C(9))
+    ws.cell(val_r, C(8)).value = terms
+    ws.cell(val_r, C(8)).alignment = center
 
-    # Ship Via / Ship Date values row 13 (di screenshot biasanya baris bawah header)
-    ws[cell("E13")].value = "Terms"  # keep terms header on row 13 merged above
-    ws[cell("E13")].font = font_bold
+    _set_border(ws, hdr_r, C(1), val_r, C(9), thin)
 
-    # Letakkan ship_via & ship_date pada row 13 (kolom E/F) tapi kita sudah pakai E13/F13 untuk Terms header merge.
-    # Jadi ship_via & ship_date taruh di row 13 (E/F) TIDAK bisa kalau terms merge.
-    # Solusi paling mirip screenshot: Ship Via/Ship Date value di row 13, Terms value di row 13/14.
-    # Kita buat: Ship via/date di row 13 (E/F), Terms header di row 12 col? -> sudah.
-    # Maka: ubah Terms header jadi di row 12 merged, Terms value di row 13 merged.
-    ws.merge_cells(f"{cell('E12')}:{cell('F12')}")
-    ws[cell("E12")].value = "Terms"
-    ws[cell("E12")].font = font_bold
-    ws[cell("E12")].alignment = center
+    # ===== ITEMS TABLE =====
+    # Header row
+    item_hdr = 14
+    # Qty header (C..D?) di gambar "Qty" hanya 1, tapi unit kolom kosong.
+    ws.cell(item_hdr, C(1)).value = "Qty"
+    ws.cell(item_hdr, C(1)).font = bold
+    ws.cell(item_hdr, C(1)).alignment = center
 
-    # Ship via/date pindah ke kolom E/F baris 12? Tidak.
-    # Agar tetap ada Ship Via/Ship Date seperti kode awal, kita set:
-    # Row 12: Ref/Sales/ShipVia/ShipDate (E/F) dan Terms (gabung) tidak mungkin bersamaan.
-    # Jadi: kita ikuti screenshot yang kamu kirim (Terms ada di kolom paling kanan sendiri).
-    # Cara paling dekat: buat 7 kolom isi (A..G), tapi kamu awalnya hanya 6 kolom.
-    # Karena kamu minta jangan ubah besar selain tampilan, kita pertahankan 6 kolom.
-    # Maka: Terms tetap di kanan (E/F merged) dan Ship Via/Ship Date tetap ada (E/F di row 12) tidak bisa.
-    # Jadi kita pertahankan struktur kamu: Ship Via/Ship Date ada, Terms ada (E11:F12 di versi lama).
-    # Untuk stabil, kita revert ke pola lama tapi sudah digeser.
-    # ---- REVERT BAR HEADER (STABIL) ----
-    # clear merges yang tadi bentrok
-    for rg in list(ws.merged_cells.ranges):
-        # hanya bersihkan area header bar yg bentrok (row 12-14 col E-F)
-        if rg.min_row in (12, 13, 14) and rg.max_row in (12, 13, 14):
-            ws.unmerge_cells(str(rg))
+    ws.cell(item_hdr, C(3)).value = "Date"
+    ws.cell(item_hdr, C(3)).font = bold
+    ws.cell(item_hdr, C(3)).alignment = center
 
-    # Header bar stabil seperti kode lama:
-    ws.merge_cells(f"{cell('A12')}:{cell('B12')}")
-    ws[cell("A12")].value = "Ref No."
-    ws[cell("A12")].font = font_bold
-    ws[cell("A12")].alignment = center
+    ws.merge_cells(start_row=item_hdr, start_column=C(4), end_row=item_hdr, end_column=C(6))
+    ws.cell(item_hdr, C(4)).value = "Description"
+    ws.cell(item_hdr, C(4)).font = bold
+    ws.cell(item_hdr, C(4)).alignment = center
 
-    ws.merge_cells(f"{cell('C12')}:{cell('D12')}")
-    ws[cell("C12")].value = "Sales Person"
-    ws[cell("C12")].font = font_bold
-    ws[cell("C12")].alignment = center
+    ws.cell(item_hdr, C(7)).value = "Price"
+    ws.cell(item_hdr, C(7)).font = bold
+    ws.cell(item_hdr, C(7)).alignment = center
 
-    ws[cell("E12")].value = "Ship Via"
-    ws[cell("E12")].font = font_bold
-    ws[cell("E12")].alignment = center
+    ws.merge_cells(start_row=item_hdr, start_column=C(8), end_row=item_hdr, end_column=C(9))
+    ws.cell(item_hdr, C(8)).value = "Amount (IDR)"
+    ws.cell(item_hdr, C(8)).font = bold
+    ws.cell(item_hdr, C(8)).alignment = center
 
-    ws[cell("F12")].value = "Ship Date"
-    ws[cell("F12")].font = font_bold
-    ws[cell("F12")].alignment = center
-
-    ws.merge_cells(f"{cell('E13')}:{cell('F13')}")
-    ws[cell("E13")].value = "Terms"
-    ws[cell("E13")].font = font_bold
-    ws[cell("E13")].alignment = center
-
-    ws.merge_cells(f"{cell('A13')}:{cell('B13')}")
-    ws[cell("A13")].value = ref_no
-    ws[cell("A13")].alignment = center
-
-    ws.merge_cells(f"{cell('C13')}:{cell('D13')}")
-    ws[cell("C13")].value = sales_person
-    ws[cell("C13")].alignment = center
-
-    ws[cell("E13")].alignment = center  # merged
-
-    ws[cell("E14")].value = ship_via
-    ws[cell("E14")].alignment = center
-
-    ws[cell("F14")].value = ship_date
-    ws[cell("F14")].alignment = center
-
-    ws.merge_cells(f"{cell('E15')}:{cell('F15')}")
-    ws[cell("E15")].value = terms
-    ws[cell("E15")].alignment = center
-
-    # ========= Table Header =========
-    table_header_row = 17
-    ws[cell(f"A{table_header_row}")].value = "Qty"
-    ws[cell(f"B{table_header_row}")].value = ""
-    ws[cell(f"C{table_header_row}")].value = "Date"
-    ws[cell(f"D{table_header_row}")].value = "Description"
-    ws[cell(f"E{table_header_row}")].value = "Price"
-    ws[cell(f"F{table_header_row}")].value = "Amount (IDR)"
-
-    for col in ["A", "B", "C", "D", "E", "F"]:
-        ws[cell(f"{col}{table_header_row}")].font = font_bold
-        ws[cell(f"{col}{table_header_row}")].alignment = center
-
-    # ========= Items =========
+    # item rows
     items = inv.get("items") or []
-    r = table_header_row + 1
+    start_item_row = item_hdr + 1
+    max_table_rows = 10  # area kosong tetap seperti template
     subtotal = 0
 
-    for it in items:
-        qty = float(it.get("qty") or 0)
-        unit = (it.get("unit") or "").strip()
-        desc = (it.get("description") or "").strip()
-        price = int(it.get("price") or 0)
-        line_date = it.get("date") or inv_date
-        amount = int(round(qty * price))
-        subtotal += amount
+    for i in range(max_table_rows):
+        rr = start_item_row + i
+        if i < len(items):
+            it = items[i]
+            qty = float(it.get("qty") or 0)
+            unit = (it.get("unit") or "").strip()
+            line_date = it.get("date") or inv_date
+            desc = (it.get("description") or "").strip()
+            price = int(it.get("price") or 0)
+            amount = int(round(qty * price))
+            subtotal += amount
 
-        ws[cell(f"A{r}")].value = qty if qty % 1 != 0 else int(qty)
-        ws[cell(f"A{r}")].alignment = center
+            ws.cell(rr, C(1)).value = qty if qty % 1 != 0 else int(qty)
+            ws.cell(rr, C(1)).alignment = center
 
-        ws[cell(f"B{r}")].value = unit
-        ws[cell(f"B{r}")].alignment = center
+            ws.cell(rr, C(2)).value = unit
+            ws.cell(rr, C(2)).alignment = center
 
-        ws[cell(f"C{r}")].value = line_date
-        ws[cell(f"C{r}")].alignment = center
+            ws.cell(rr, C(3)).value = line_date
+            ws.cell(rr, C(3)).alignment = center
 
-        ws[cell(f"D{r}")].value = desc
-        ws[cell(f"D{r}")].alignment = left
+            ws.merge_cells(start_row=rr, start_column=C(4), end_row=rr, end_column=C(6))
+            ws.cell(rr, C(4)).value = desc
+            ws.cell(rr, C(4)).alignment = left_mid
 
-        ws[cell(f"E{r}")].value = price
-        ws[cell(f"E{r}")].alignment = right
-        money(ws[cell(f"E{r}")])
+            ws.cell(rr, C(7)).value = price
+            ws.cell(rr, C(7)).alignment = right_mid
+            money(ws.cell(rr, C(7)))
 
-        ws[cell(f"F{r}")].value = amount
-        ws[cell(f"F{r}")].alignment = right
-        money(ws[cell(f"F{r}")])
+            ws.merge_cells(start_row=rr, start_column=C(8), end_row=rr, end_column=C(9))
+            ws.cell(rr, C(8)).value = amount
+            ws.cell(rr, C(8)).alignment = right_mid
+            money(ws.cell(rr, C(8)))
+        else:
+            # tetap merge area description & amount agar struktur tabel tetap sama
+            ws.merge_cells(start_row=rr, start_column=C(4), end_row=rr, end_column=C(6))
+            ws.merge_cells(start_row=rr, start_column=C(8), end_row=rr, end_column=C(9))
 
-        r += 1
+    table_end = start_item_row + max_table_rows - 1
+    _set_border(ws, item_hdr, C(1), table_end, C(9), thin)
 
-    # Minimal tinggi tabel biar mirip screenshot (ada ruang kosong)
-    min_last_row = table_header_row + 12
-    if r < min_last_row:
-        r = min_last_row
-
-    # Border area utama sampai tabel
-    top_block_end = 15
-    _set_border(ws, 1, 1 + SHIFT, top_block_end, 6 + SHIFT, border)
-
-    # Border tabel item
-    _set_border(ws, table_header_row, 1 + SHIFT, r - 1, 6 + SHIFT, border)
-
-    # ========= Summary kanan bawah =========
+    # ===== TOTALS (kanan, seperti gambar) =====
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
     deposit = int(inv.get("deposit") or 0)
@@ -588,86 +521,82 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ppn = int(round(total_before_ppn * ppn_rate))
     balance = total_before_ppn + ppn - deposit
 
-    sum_row = r + 1
-    # Total
-    ws[cell(f"E{sum_row}")].value = "Total"
-    ws[cell(f"E{sum_row}")].alignment = right
-    ws[cell(f"E{sum_row}")].font = font_bold
-    ws[cell(f"F{sum_row}")].value = subtotal
-    ws[cell(f"F{sum_row}")].alignment = right
-    money(ws[cell(f"F{sum_row}")])
+    sum_r = table_end + 2
 
-    # Freight
-    ws[cell(f"E{sum_row+1}")].value = "Freight"
-    ws[cell(f"E{sum_row+1}")].alignment = right
-    ws[cell(f"F{sum_row+1}")].value = freight
-    ws[cell(f"F{sum_row+1}")].alignment = right
-    money(ws[cell(f"F{sum_row+1}")])
+    def put_sum(row, label, value, bold_label=False, bold_value=False):
+        ws.merge_cells(start_row=row, start_column=C(7), end_row=row, end_column=C(8))
+        ws.cell(row, C(7)).value = label
+        ws.cell(row, C(7)).alignment = right_mid
+        ws.cell(row, C(7)).font = Font(bold=bold_label)
 
-    # Total before ppn
-    ws[cell(f"E{sum_row+2}")].value = "Total"
-    ws[cell(f"E{sum_row+2}")].alignment = right
-    ws[cell(f"E{sum_row+2}")].font = font_bold
-    ws[cell(f"F{sum_row+2}")].value = total_before_ppn
-    ws[cell(f"F{sum_row+2}")].alignment = right
-    money(ws[cell(f"F{sum_row+2}")])
+        ws.merge_cells(start_row=row, start_column=C(9), end_row=row, end_column=C(9))
+        ws.cell(row, C(9)).value = value
+        ws.cell(row, C(9)).alignment = right_mid
+        ws.cell(row, C(9)).font = Font(bold=bold_value)
+        money(ws.cell(row, C(9)))
 
-    # PPN
-    ws[cell(f"E{sum_row+3}")].value = f"PPN {int(ppn_rate*100)}%"
-    ws[cell(f"E{sum_row+3}")].alignment = right
-    ws[cell(f"F{sum_row+3}")].value = ppn
-    ws[cell(f"F{sum_row+3}")].alignment = right
-    money(ws[cell(f"F{sum_row+3}")])
+    put_sum(sum_r + 0, "Total", subtotal, True, False)
+    put_sum(sum_r + 1, "Freight", freight, True, False)
+    put_sum(sum_r + 2, "Total", total_before_ppn, True, False)
+    put_sum(sum_r + 3, f"PPN {int(ppn_rate*100)}%", ppn, True, False)
+    put_sum(sum_r + 4, "Less: Deposit", deposit, True, False)
+    put_sum(sum_r + 5, "Balance Due", balance, True, True)
 
-    # Deposit
-    ws[cell(f"E{sum_row+4}")].value = "Less: Deposit"
-    ws[cell(f"E{sum_row+4}")].alignment = right
-    ws[cell(f"F{sum_row+4}")].value = deposit
-    ws[cell(f"F{sum_row+4}")].alignment = right
-    money(ws[cell(f"F{sum_row+4}")])
+    # border totals block area (kolom I..K lookalike -> C(7)..C(9))
+    _set_border(ws, sum_r, C(7), sum_r + 5, C(9), thin)
 
-    # Balance Due
-    ws[cell(f"E{sum_row+5}")].value = "Balance Due"
-    ws[cell(f"E{sum_row+5}")].alignment = right
-    ws[cell(f"E{sum_row+5}")].font = font_bold
-    ws[cell(f"F{sum_row+5}")].value = balance
-    ws[cell(f"F{sum_row+5}")].alignment = right
-    ws[cell(f"F{sum_row+5}")].font = font_bold
-    money(ws[cell(f"F{sum_row+5}")])
+    # ===== PAYMENT BLOCK kiri bawah (seperti gambar) =====
+    pay_r = sum_r  # sejajarkan kiri dengan total block
+    ws.merge_cells(start_row=pay_r, start_column=C(1), end_row=pay_r, end_column=C(6))
+    ws.cell(pay_r, C(1)).value = "Please Transfer Full Amount to:"
+    ws.cell(pay_r, C(1)).font = bold
+    ws.cell(pay_r, C(1)).alignment = left_mid
 
-    _set_border(ws, sum_row, 5 + SHIFT, sum_row + 5, 6 + SHIFT, border)
+    def pay_line(row, label, value):
+        ws.merge_cells(start_row=row, start_column=C(1), end_row=row, end_column=C(2))
+        ws.cell(row, C(1)).value = label
+        ws.cell(row, C(1)).alignment = left_mid
 
-    # ========= Payment block kiri bawah =========
-    pay_row = sum_row
-    ws.merge_cells(f"{cell(f'A{pay_row}')}" + ":" + f"{cell(f'D{pay_row}')}")
-    ws[cell(f"A{pay_row}")].value = "Please Transfer Full Amount to:"
-    ws[cell(f"A{pay_row}")].font = font_bold
-    ws[cell(f"A{pay_row}")].alignment = left_mid
+        ws.merge_cells(start_row=row, start_column=C(3), end_row=row, end_column=C(6))
+        ws.cell(row, C(3)).value = value
+        ws.cell(row, C(3)).alignment = left_mid
 
-    ws[cell(f"A{pay_row+1}")].value = "Beneficiary :"
-    ws[cell(f"A{pay_row+2}")].value = "Bank Name :"
-    ws[cell(f"A{pay_row+3}")].value = "Branch :"
-    ws[cell(f"A{pay_row+4}")].value = "IDR Acct :"
+    pay_line(pay_r + 1, "Beneficiary  :", payment.get("beneficiary", ""))
+    pay_line(pay_r + 2, "Bank Name    :", payment.get("bank_name", ""))
+    pay_line(pay_r + 3, "Branch       :", payment.get("branch", ""))
+    pay_line(pay_r + 4, "IDR Acct     :", payment.get("idr_acct", ""))
 
-    ws.merge_cells(f"{cell(f'B{pay_row+1}')}:{cell(f'D{pay_row+1}')}")
-    ws[cell(f"B{pay_row+1}")].value = payment["beneficiary"]
+    _set_border(ws, pay_r, C(1), pay_r + 4, C(6), thin)
 
-    ws.merge_cells(f"{cell(f'B{pay_row+2}')}:{cell(f'D{pay_row+2}')}")
-    ws[cell(f"B{pay_row+2}")].value = payment["bank_name"]
+    # ===== SIGNATURE BOX (gambar ke-3 & ke-4) =====
+    # Kotak di bawah totals (tengah kanan)
+    sig_top = pay_r + 7
+    sig_left = C(6)   # mulai agak tengah
+    sig_right = C(9)  # sampai kanan
+    sig_bottom = sig_top + 7
 
-    ws.merge_cells(f"{cell(f'B{pay_row+3}')}:{cell(f'D{pay_row+3}')}")
-    ws[cell(f"B{pay_row+3}")].value = payment["branch"]
+    # Header kotak: nama PT
+    ws.merge_cells(start_row=sig_top, start_column=sig_left, end_row=sig_top, end_column=sig_right)
+    ws.cell(sig_top, sig_left).value = "PT. Sarana Trans Bersama Jaya"
+    ws.cell(sig_top, sig_left).font = bold
+    ws.cell(sig_top, sig_left).alignment = center
 
-    ws.merge_cells(f"{cell(f'B{pay_row+4}')}:{cell(f'D{pay_row+4}')}")
-    ws[cell(f"B{pay_row+4}")].value = payment["idr_acct"]
+    # Area kosong tanda tangan
+    for rr in range(sig_top + 1, sig_bottom):
+        ws.merge_cells(start_row=rr, start_column=sig_left, end_row=rr, end_column=sig_right)
 
-    _set_border(ws, pay_row, 1 + SHIFT, pay_row + 4, 4 + SHIFT, border)
+    # Border kotak signature (medium biar tegas seperti gambar)
+    _set_border(ws, sig_top, sig_left, sig_bottom - 1, sig_right, medium)
 
-    # Font default area
-    for row in ws.iter_rows(min_row=1, max_row=pay_row + 6, min_col=1 + SHIFT, max_col=6 + SHIFT):
-        for c in row:
-            if c.font is None or c.font == Font():
-                c.font = font_normal
+    # Footer line bawah: "Please kindly fax..."
+    footer_r = sig_bottom
+    ws.merge_cells(start_row=footer_r, start_column=sig_left, end_row=footer_r, end_column=sig_right)
+    ws.cell(footer_r, sig_left).value = "Please kindly fax to our attention upon receipt"
+    ws.cell(footer_r, sig_left).alignment = center
+    _set_border(ws, footer_r, sig_left, footer_r, sig_right, medium)
+
+    # ===== Final: set font default supaya mirip template (Calibri 11 default Excel OK) =====
+    # (tidak perlu ubah global, cukup biarkan default)
 
     try:
         folder = str(FILES_DIR)
@@ -678,6 +607,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     out_path = os.path.join(folder, f"{fname_base}.xlsx")
     wb.save(out_path)
     return f"{fname_base}.xlsx"
+
 
 def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     try:
