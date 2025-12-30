@@ -150,7 +150,7 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         if not alamat:
             alamat = search_company_address_ai(text).strip()
         if not alamat:
-            alamat = "Di Tempat"
+            alamat = "Di tempat"
 
         state['data']['alamat_perusahaan'] = alamat
         state['step'] = 'jenis_kode_limbah'

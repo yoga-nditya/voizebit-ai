@@ -456,7 +456,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         if not alamat:
             alamat = search_company_address_ai(text).strip()
         if not alamat:
-            alamat = "Di Tempat"
+            alamat = "Di tempat"
 
         state['data']['alamat_pihak_pertama'] = alamat
         state['step'] = 'mou_pilih_pihak_ketiga'
