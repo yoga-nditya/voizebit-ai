@@ -143,6 +143,26 @@ def make_unique_filename_base(base_name: str) -> str:
             return candidate
         i += 1
 
+# ✅ NEW: normalisasi voice "strip" -> "-"
+def normalize_voice_strip(text: str) -> str:
+    """
+    Jika input dari voice berisi kata 'strip' (umum diucapkan user),
+    maka diperlakukan sebagai simbol '-'.
+    """
+    if not text:
+        return text
+    t = text.strip().lower()
+
+    # Anggap 'strip' sebagai '-'
+    if t in ("strip",):
+        return "-"
+
+    # Kalau user ngomong: "strip aja", "pakai strip", dll -> jadi '-'
+    if re.fullmatch(r"(.*\b)?strip(\b.*)?", t):
+        return "-"
+
+    return text
+
 
 # =========================
 # Counter Invoice (as-is)
@@ -243,18 +263,11 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.page_margins.top = 0.35
     ws.page_margins.bottom = 0.35
 
-    # =========================================================
-    # SHIFT TO CENTER: start from column B (like your template)
-    # We keep column A as margin
-    # Layout columns used: B..G (6 columns)
-    # B=Qty, C=Unit, D=Date, E=Description, F=Price, G=Amount
-    # =========================================================
     ws.column_dimensions["A"].width = 3  # margin
     col_widths = {"B": 8, "C": 6, "D": 12, "E": 45, "F": 14, "G": 16}
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
 
-    # styles
     bold = Font(bold=True)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left = Alignment(horizontal="left", vertical="top", wrap_text=True)
@@ -291,9 +304,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    # -------------------------
-    # TOP: Bill To / Ship To blocks (no big outer border)
-    # -------------------------
     ws["B1"].value = "Bill To:"
     ws["B1"].font = bold
     ws.merge_cells("B1:D1")
@@ -342,7 +352,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.merge_cells("D7:E7")
     ws["D7"].alignment = left_mid
 
-    # Right small block (Invoice / Date / No Surat Jalan) like template
     ws["F6"].value = "Invoice"
     ws["F6"].font = bold
     ws["F6"].alignment = right
@@ -362,11 +371,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["G8"].value = no_surat_jalan
     ws["G8"].alignment = left_mid
 
-    # -------------------------
-    # Ref / Sales / Ship / Terms table (THIS IS INSIDE BORDERED AREA)
-    # Like your template: from row 10..12 with thin borders
-    # -------------------------
-    # Header
     ws.merge_cells("B10:C10")
     ws["B10"].value = "Ref No."
     ws["B10"].font = bold
@@ -390,7 +394,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["F11"].font = bold
     ws["F11"].alignment = center
 
-    # Values row
     ws.merge_cells("B11:C11")
     ws["B11"].value = ref_no
     ws["B11"].alignment = center
@@ -416,6 +419,12 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["G10"].alignment = center
 
     ws["F11"].alignment = center
+    ws["F12"].alignment = center
+
+    ws["F10"].alignment = center
+    ws["G10"].alignment = center
+
+    ws["F11"].alignment = center
 
     ws["F12"].alignment = center
 
@@ -424,16 +433,9 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     ws["F11"].alignment = center
 
-    # Fill Ship Via / Ship Date cells (row 11 for via/date)
     ws["F11"].value = ship_via
     ws["F11"].alignment = center
-    # Ship date in G11 is taken by merge, so place at G10? we keep ship date in G11 is not possible.
-    # Keep ship date in G11 by using row 11 before the merge for terms. Your template shows ship date under Ship Date column.
-    # So we place ship date in G11 by unmerging terms header already at F11:G11, and keep Terms only at F12:G12.
-    # To preserve your template look: Ship Via/Ship Date row is 11, Terms header row is 10 already shown in template row 2 screenshot.
-    # We'll correct: Terms header is at F10:G10? No, you showed Terms as last column in header row.
-    # So we simplify: Terms is column G, not merged.
-    # --- Minimal fix: write terms in G12 and ship date in G11
+
     ws.unmerge_cells("F11:G11")
     ws["G10"].value = "Terms"
     ws["G10"].font = bold
@@ -444,13 +446,8 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["G12"].value = terms
     ws["G12"].alignment = center
 
-    # Apply border only on this ref block: B10..G12
     _set_inner_grid(ws, 10, 2, 12, 7)
 
-    # -------------------------
-    # Items header (inside bordered table area)
-    # Table main: Qty..Amount (B14..G??)
-    # -------------------------
     ws["B14"].value = "Qty"
     ws["C14"].value = ""
     ws["D14"].value = "Date"
@@ -495,20 +492,12 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
         r += 1
 
-    # Template has empty rows; keep minimal last row like your previous logic
     min_last_row = 26
     if r < min_last_row:
         r = min_last_row
 
-    # BORDERED TABLE ONLY: from Ref table and items area should be bordered
-    # Ref table already bordered. Now border items table range:
-    # B14..G(r-1)
     _set_inner_grid(ws, 14, 2, r - 1, 7)
 
-    # -------------------------
-    # Totals area: labels NOT boxed; ONLY amount column boxed like template
-    # Place at columns F (label) and G (amount)
-    # -------------------------
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
     deposit = int(inv.get("deposit") or 0)
@@ -518,7 +507,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     balance = total_before_ppn + ppn - deposit
 
     sum_row = r
-    # Labels in F, amounts in G
     labels = [
         ("Total", subtotal, True),
         ("Freight", freight, False),
@@ -538,19 +526,13 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ws[f"G{rr}"].font = Font(bold=is_bold)
         money(ws[f"G{rr}"])
 
-    # Border ONLY on amount column G for totals (like screenshot)
     s = _thin_side("thin")
     for i in range(len(labels)):
         rr = sum_row + i
-        # top border on first, bottom on last
         top = s if i == 0 else None
         bottom = s if i == len(labels) - 1 else None
-        # left/right always
         ws[f"G{rr}"].border = Border(left=s, right=s, top=top or s, bottom=bottom or s)
 
-    # -------------------------
-    # Payment block left bottom (no outer big box, just like template lines)
-    # -------------------------
     pay_row = sum_row
     ws.merge_cells(f"B{pay_row}:E{pay_row}")
     ws[f"B{pay_row}"].value = "Please Transfer Full Amount to:"
@@ -577,23 +559,16 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.merge_cells(f"C{pay_row+4}:E{pay_row+4}")
     ws[f"C{pay_row+4}"].alignment = left_mid
 
-    # -------------------------
-    # Bottom right box + footer text (like your image 3)
-    # -------------------------
-    # Put box under totals area
     box_top = pay_row + 8
     box_bottom = box_top + 6
 
-    # Box range: E..G (start from E to G) to resemble template right-lower area
     ws.merge_cells(f"E{box_top}:G{box_top}")
     ws[f"E{box_top}"].value = "PT. Sarana Trans Bersama Jaya"
     ws[f"E{box_top}"].alignment = center
     ws[f"E{box_top}"].font = bold
 
-    # draw thick-ish (still thin in openpyxl) border around the box
     _set_border_edges(ws, box_top, 5, box_bottom, 7, thin=True)
 
-    # footer line text centered under box
     footer_row = box_bottom + 2
     ws.merge_cells(f"B{footer_row}:G{footer_row}")
     ws[f"B{footer_row}"].value = "Please kindly fax to our attention upon receipt"
@@ -766,6 +741,10 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
       - dict response jika handled
     """
 
+    # ✅ NEW: normalisasi voice "strip" -> "-"
+    text = normalize_voice_strip(text)
+    lower = (text or "").strip().lower()
+
     # trigger invoice (sama)
     if (("invoice" in lower) or ("faktur" in lower)) and (state.get("step") == "idle"):
         inv_no = get_next_invoice_no()
@@ -824,7 +803,6 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
         return {"text": out_text, "history_id": history_id_created or history_id_in}
 
-    # step-step invoice (sama)
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
 
@@ -854,7 +832,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             state["data"]["ship_to"] = dict(state["data"]["bill_to"])
             state["step"] = "inv_phone"
             conversations[sid] = state
-            out_text = "❓ <b>3. Phone?</b> (boleh kosong, ketik '-' jika tidak ada)"
+            # ✅ changed to voice-friendly
+            out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
         elif ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower):
             state["step"] = "inv_shipto_name"
             conversations[sid] = state
@@ -878,18 +857,19 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
         state["step"] = "inv_phone"
         conversations[sid] = state
-        out_text = "❓ <b>3. Phone?</b> (boleh kosong, ketik '-' jika tidak ada)"
+        # ✅ changed to voice-friendly
+        out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
         return {"text": out_text, "history_id": history_id_in}
 
     if state.get("step") == "inv_phone":
-        # keep original behavior
         state["data"]["phone"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_fax"
         conversations[sid] = state
-        out_text = "❓ <b>4. Fax?</b> (boleh kosong, ketik '-' jika tidak ada)"
+        # ✅ changed to voice-friendly
+        out_text = "❓ <b>4. Fax?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -899,7 +879,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["fax"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_attn"
         conversations[sid] = state
-        out_text = "❓ <b>5. Attn?</b> (default: Accounting / Finance | ketik '-' untuk default)"
+        # ✅ changed to voice-friendly
+        out_text = "❓ <b>5. Attn?</b> (default: Accounting / Finance | sebut <b>strip</b> untuk default)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -933,7 +914,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["current_item"]["date"] = state["data"]["invoice_date"]
         state["step"] = "inv_item_desc"
         conversations[sid] = state
-        out_text = "❓ <b>6B. Jenis Limbah / Kode Limbah?</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau ketik <b>NON B3</b>)</i>"
+        out_text = "❓ <b>6B. Jenis Limbah / Kode Limbah?</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau sebut <b>NON B3</b>)</i>"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -964,7 +945,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan.<br><br>Ketik kode/jenis lain atau <b>NON B3</b>."
+        out_text = f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan.<br><br>Ucapkan kode/jenis lain atau <b>NON B3</b>."
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
