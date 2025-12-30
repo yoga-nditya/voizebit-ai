@@ -21,12 +21,14 @@ from utils import (
 )
 from config_new import FILES_DIR
 
+
 def is_non_b3_input(text: str) -> bool:
     if not text:
         return False
     t = text.strip().lower()
     norm = re.sub(r'[\s\-_]+', '', t)
     return norm in ("nonb3", "nonbii3") or norm.startswith("nonb3")
+
 
 def normalize_id_number_text(text: str) -> str:
     if not text:
@@ -35,6 +37,7 @@ def normalize_id_number_text(text: str) -> str:
     t = re.sub(r'(?<=\d)[\.,](?=\d{3}(\D|$))', '', t)
     t = re.sub(r'(?<=\d),(?=\d)', '.', t)
     return t
+
 
 def parse_amount_id(text: str) -> int:
     if not text:
@@ -105,6 +108,7 @@ def parse_amount_id(text: str) -> int:
         digits = re.sub(r'\D+', '', str(val))
         return int(digits) if digits else 0
 
+
 def parse_qty_id(text: str) -> float:
     if not text:
         return 0.0
@@ -115,6 +119,19 @@ def parse_qty_id(text: str) -> float:
     except:
         m = re.findall(r'\d+(?:\.\d+)?', t)
         return float(m[0]) if m else 0.0
+
+
+def normalize_voice_strip(text: str) -> str:
+    if not text:
+        return text
+    t = text.strip()
+    low = t.lower()
+    if low == "strip":
+        return "-"
+    if re.fullmatch(r"(.*\b)?strip(\b.*)?", low):
+        return "-"
+    return text
+
 
 def make_unique_filename_base(base_name: str) -> str:
     base_name = (base_name or "").strip()
@@ -143,30 +160,6 @@ def make_unique_filename_base(base_name: str) -> str:
             return candidate
         i += 1
 
-# ✅ NEW: normalisasi voice "strip" -> "-"
-def normalize_voice_strip(text: str) -> str:
-    """
-    Jika input dari voice berisi kata 'strip' (umum diucapkan user),
-    maka diperlakukan sebagai simbol '-'.
-    """
-    if not text:
-        return text
-    t = text.strip().lower()
-
-    # Anggap 'strip' sebagai '-'
-    if t in ("strip",):
-        return "-"
-
-    # Kalau user ngomong: "strip aja", "pakai strip", dll -> jadi '-'
-    if re.fullmatch(r"(.*\b)?strip(\b.*)?", t):
-        return "-"
-
-    return text
-
-
-# =========================
-# Counter Invoice (as-is)
-# =========================
 
 def _invoice_counter_path() -> str:
     try:
@@ -175,6 +168,7 @@ def _invoice_counter_path() -> str:
         folder = "static/files"
     os.makedirs(folder, exist_ok=True)
     return os.path.join(folder, "invoice_counter.json")
+
 
 def load_invoice_counter() -> int:
     path = _invoice_counter_path()
@@ -187,10 +181,12 @@ def load_invoice_counter() -> int:
     except:
         return 0
 
+
 def save_invoice_counter(n: int) -> None:
     path = _invoice_counter_path()
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"counter": int(n)}, f)
+
 
 def get_next_invoice_no() -> str:
     now = datetime.now()
@@ -200,28 +196,26 @@ def get_next_invoice_no() -> str:
     return f"{prefix}{str(n).zfill(3)}"
 
 
-# =========================
-# Generate Invoice (as-is)
-# =========================
-
 def _thin_side(style="thin"):
     return Side(style=style, color="000000")
+
 
 def _border_all(thin=True):
     s = _thin_side("thin" if thin else "medium")
     return Border(left=s, right=s, top=s, bottom=s)
 
+
 def _border_custom(left=None, right=None, top=None, bottom=None):
-    # left/right/top/bottom: Side or None
     return Border(left=left, right=right, top=top, bottom=bottom)
+
 
 def _set_border(ws, r1, c1, r2, c2, border):
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
             ws.cell(r, c).border = border
 
+
 def _set_border_edges(ws, r1, c1, r2, c2, thin=True):
-    # applies border only on edges of the range, keeps inside unchanged
     s = _thin_side("thin" if thin else "medium")
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
@@ -243,13 +237,14 @@ def _set_border_edges(ws, r1, c1, r2, c2, thin=True):
 
             cell.border = Border(left=left, right=right, top=top, bottom=bottom)
 
+
 def _set_inner_grid(ws, r1, c1, r2, c2):
-    # grid thin inside a table range
     s = _thin_side("thin")
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
             cell = ws.cell(r, c)
             cell.border = Border(left=s, right=s, top=s, bottom=s)
+
 
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb = Workbook()
@@ -263,7 +258,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.page_margins.top = 0.35
     ws.page_margins.bottom = 0.35
 
-    ws.column_dimensions["A"].width = 3  # margin
+    ws.column_dimensions["A"].width = 3
     col_widths = {"B": 8, "C": 6, "D": 12, "E": 45, "F": 14, "G": 16}
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
@@ -389,11 +384,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["G10"].font = bold
     ws["G10"].alignment = center
 
-    ws.merge_cells("F11:G11")
-    ws["F11"].value = "Terms"
-    ws["F11"].font = bold
-    ws["F11"].alignment = center
-
     ws.merge_cells("B11:C11")
     ws["B11"].value = ref_no
     ws["B11"].alignment = center
@@ -402,47 +392,16 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["D11"].value = sales_person
     ws["D11"].alignment = center
 
-    ws["F10"].alignment = center
-    ws["G10"].alignment = center
-
-    ws["F11"].alignment = center
-    ws["F12"].alignment = center
-
-    ws["F12"].value = terms
-    ws.merge_cells("F12:G12")
-    ws["F12"].alignment = center
-
-    ws["F11"].alignment = center
-    ws["F12"].alignment = center
-
-    ws["F10"].alignment = center
-    ws["G10"].alignment = center
-
-    ws["F11"].alignment = center
-    ws["F12"].alignment = center
-
-    ws["F10"].alignment = center
-    ws["G10"].alignment = center
-
-    ws["F11"].alignment = center
-
-    ws["F12"].alignment = center
-
-    ws["F10"].alignment = center
-    ws["G10"].alignment = center
-
-    ws["F11"].alignment = center
-
     ws["F11"].value = ship_via
     ws["F11"].alignment = center
 
-    ws.unmerge_cells("F11:G11")
-    ws["G10"].value = "Terms"
-    ws["G10"].font = bold
-    ws["G10"].alignment = center
-
     ws["G11"].value = ship_date
     ws["G11"].alignment = center
+
+    ws["F12"].value = "Terms"
+    ws["F12"].font = bold
+    ws["F12"].alignment = center
+
     ws["G12"].value = terms
     ws["G12"].alignment = center
 
@@ -584,6 +543,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb.save(out_path)
     return f"{fname_base}.xlsx"
 
+
 def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     try:
         folder = str(FILES_DIR)
@@ -631,8 +591,8 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     draw_text(300, y, "Ship To:", 11, True)
 
     y -= 14
-    bt_lines = [bill_to.get("name",""), bill_to.get("address",""), bill_to.get("address2","")]
-    st_lines = [ship_to.get("name",""), ship_to.get("address",""), ship_to.get("address2","")]
+    bt_lines = [bill_to.get("name", ""), bill_to.get("address", ""), bill_to.get("address2", "")]
+    st_lines = [ship_to.get("name", ""), ship_to.get("address", ""), ship_to.get("address2", "")]
     bt_lines = [x for x in bt_lines if (x or "").strip()]
     st_lines = [x for x in st_lines if (x or "").strip()]
 
@@ -720,32 +680,20 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
 
     y3 = 90
     draw_text(40, y3 + 40, "Please Transfer Full Amount to:", 10, True)
-    draw_text(40, y3 + 24, f"Beneficiary : {payment.get('beneficiary','')}", 9, False)
-    draw_text(40, y3 + 12, f"Bank Name   : {payment.get('bank_name','')}", 9, False)
-    draw_text(40, y3 + 0,  f"Branch      : {payment.get('branch','')}", 9, False)
-    draw_text(40, y3 - 12, f"IDR Acct    : {payment.get('idr_acct','')}", 9, False)
+    draw_text(40, y3 + 24, f"Beneficiary : {payment.get('beneficiary', '')}", 9, False)
+    draw_text(40, y3 + 12, f"Bank Name   : {payment.get('bank_name', '')}", 9, False)
+    draw_text(40, y3 + 0, f"Branch      : {payment.get('branch', '')}", 9, False)
+    draw_text(40, y3 - 12, f"IDR Acct    : {payment.get('idr_acct', '')}", 9, False)
 
     c.showPage()
     c.save()
     return f"{fname_base}.pdf"
 
 
-# =========================
-# CHAT HANDLER INVOICE
-# =========================
-
 def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict, conversations: dict, history_id_in):
-    """
-    Return:
-      - None jika bukan flow invoice
-      - dict response jika handled
-    """
-
-    # ✅ NEW: normalisasi voice "strip" -> "-"
     text = normalize_voice_strip(text)
     lower = (text or "").strip().lower()
 
-    # trigger invoice (sama)
     if (("invoice" in lower) or ("faktur" in lower)) and (state.get("step") == "idle"):
         inv_no = get_next_invoice_no()
         state["step"] = "inv_billto_name"
@@ -832,7 +780,6 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             state["data"]["ship_to"] = dict(state["data"]["bill_to"])
             state["step"] = "inv_phone"
             conversations[sid] = state
-            # ✅ changed to voice-friendly
             out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
         elif ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower):
             state["step"] = "inv_shipto_name"
@@ -857,7 +804,6 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
         state["step"] = "inv_phone"
         conversations[sid] = state
-        # ✅ changed to voice-friendly
         out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
@@ -868,7 +814,6 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["phone"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_fax"
         conversations[sid] = state
-        # ✅ changed to voice-friendly
         out_text = "❓ <b>4. Fax?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
@@ -879,7 +824,6 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["fax"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_attn"
         conversations[sid] = state
-        # ✅ changed to voice-friendly
         out_text = "❓ <b>5. Attn?</b> (default: Accounting / Finance | sebut <b>strip</b> untuk default)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
