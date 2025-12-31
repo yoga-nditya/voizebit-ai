@@ -132,7 +132,6 @@ def words_to_number_id(text: str):
         return None
 
     raw = text.strip().lower()
-
     norm = normalize_id_number_text(raw)
     if re.fullmatch(r"\d+(?:\.\d+)?", norm):
         try:
@@ -249,8 +248,6 @@ def _sanitize_company_address(addr: str) -> str:
         return "Di tempat"
 
     low = a.lower()
-
-    # kata/kalimat "penjelasan" yang sering muncul dari AI/search
     bad_markers = [
         "tidak dapat menemukan",
         "tidak ditemukan",
@@ -268,12 +265,10 @@ def _sanitize_company_address(addr: str) -> str:
         "not found",
         "no information",
     ]
-
     if any(m in low for m in bad_markers):
         return "Di tempat"
 
-    # kalau terlalu panjang (biasanya penjelasan), paksa jadi "Di tempat"
-    # template rapi butuh alamat singkat 1-2 baris
+    # kalau terlalu panjang (biasanya penjelasan)
     if len(a) > 90:
         return "Di tempat"
 
@@ -377,12 +372,7 @@ def _side(style="thin"):
     return Side(style=style, color="000000")
 
 
-def apply_outer_and_vertical_only(
-    ws, r1, c1, r2, c2,
-    vertical_separators_cols,
-    outer_style="medium",
-    inner_style="thin"
-):
+def apply_outer_and_vertical_only(ws, r1, c1, r2, c2, vertical_separators_cols, outer_style="medium", inner_style="thin"):
     """
     Border:
     - outer = medium
@@ -409,7 +399,6 @@ def apply_outer_and_vertical_only(
             if r == r2:
                 bottom = outer
 
-            # draw thin vertical separators
             if c in seps and c != c1:
                 left = inner if left is None else left
             if (c + 1) in seps and c != c2:
@@ -417,7 +406,6 @@ def apply_outer_and_vertical_only(
 
             ws.cell(r, c).border = Border(left=left, right=right, top=top, bottom=bottom)
 
-    # ensure last col right outer border
     for r in range(r1, r2 + 1):
         cell = ws.cell(r, c2)
         cell.border = Border(
@@ -440,13 +428,13 @@ def set_outer_border_only(ws, r1, c1, r2, c2, style="medium"):
 
 
 # ==========================================
-# ✅ Excel layout dibuat seperti template (gambar kedua)
+# ✅ Excel layout seperti template (gambar kedua)
 # - Area invoice D..J
 # - Bill To: D:F
 # - Ship To: H:J
 # - Ref box: D..J (Terms di J)
 # - Items: D..J (Description merge G:H, Price di I, Amount di J)
-# - Totals: label di I, nilai di J (tanpa border)
+# - Totals: label di I tanpa border, nilai di J dengan border tipis per baris
 # ==========================================
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb = Workbook()
@@ -462,7 +450,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.page_margins.top = 0.35
     ws.page_margins.bottom = 0.35
 
-    # gridlines biar mirip template excel
     ws.sheet_view.showGridLines = True
     ws.sheet_view.zoomScale = 110
 
@@ -487,10 +474,10 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.column_dimensions["D"].width = 7    # Qty
     ws.column_dimensions["E"].width = 6    # Unit
     ws.column_dimensions["F"].width = 12   # Date
-    ws.column_dimensions["G"].width = 26   # Desc (part1)
-    ws.column_dimensions["H"].width = 19   # Desc (part2)
+    ws.column_dimensions["G"].width = 26   # Desc part 1
+    ws.column_dimensions["H"].width = 19   # Desc part 2
     ws.column_dimensions["I"].width = 14   # Price
-    ws.column_dimensions["J"].width = 18   # Amount / Terms
+    ws.column_dimensions["J"].width = 18   # Amount/Terms
 
     payment = inv.get("payment") or {}
     defaults = {
@@ -519,7 +506,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    # row heights (lebih rapi)
+    # row heights
     ws.row_dimensions[1].height = 16
     ws.row_dimensions[2].height = 34
     ws.row_dimensions[3].height = 34
@@ -645,7 +632,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["J11"].value = terms
     ws["J11"].alignment = center
 
-    # vertical separators at F(6), H(8), I(9), J(10)
     apply_outer_and_vertical_only(ws, 10, 4, 13, 10, vertical_separators_cols=[6, 8, 9, 10])
 
     # ======================
@@ -653,7 +639,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     # Qty(D) Unit(E) Date(F) Desc(G:H merge) Price(I) Amount(J)
     # ======================
     ws["D14"].value = "Qty"
-    ws["E14"].value = ""  # unit header kosong
+    ws["E14"].value = ""
     ws["F14"].value = "Date"
     ws.merge_cells("G14:H14")
     ws["G14"].value = "Description"
@@ -672,8 +658,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     for idx in range(max_rows):
         r = start_row + idx
-
-        # merge Description per-row (G:H)
         ws.merge_cells(f"G{r}:H{r}")
 
         ws[f"D{r}"].alignment = center
@@ -703,12 +687,10 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
             money(ws[f"J{r}"])
 
     last_table_row = start_row + max_rows - 1
-
-    # vertical separators: E(5), F(6), G(7), I(9), J(10)
     apply_outer_and_vertical_only(ws, 14, 4, last_table_row, 10, vertical_separators_cols=[5, 6, 7, 9, 10])
 
     # ======================
-    # Payment + Totals (seperti template)
+    # Payment + Totals
     # ======================
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
@@ -718,7 +700,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ppn = int(round(total_before_ppn * ppn_rate))
     balance = total_before_ppn + ppn - deposit
 
-    # turun sedikit biar rapi
     base_row = last_table_row + 2
 
     # Left: D:H
@@ -738,7 +719,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ws[f"D{base_row+i}"].value = line
         ws[f"D{base_row+i}"].alignment = left_mid
 
-    # Totals: label di I, value di J (NO BORDER)
+    # Totals: label di I TANPA border, angka di J ADA border tipis (seperti template)
     labels = [
         ("Total", subtotal),
         ("Freight", freight),
@@ -747,23 +728,27 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ("Less: Deposit", deposit),
         ("Balance Due", balance),
     ]
-
     totals_top = base_row
+
+    thin_side = Side(style="thin", color="000000")
+    no_border = Border()
+
+    def border_box_thin():
+        return Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
     for i, (lab, val) in enumerate(labels):
         rr = totals_top + i
 
         ws[f"I{rr}"].value = lab
         ws[f"I{rr}"].alignment = right
         ws[f"I{rr}"].font = bold
+        ws[f"I{rr}"].border = no_border  # ✅ label tanpa border
 
         ws[f"J{rr}"].value = val
         ws[f"J{rr}"].alignment = right
         ws[f"J{rr}"].font = bold if lab in ("Balance Due",) else Font(bold=False)
+        ws[f"J{rr}"].border = border_box_thin()  # ✅ angka ada border
         money(ws[f"J{rr}"])
-
-        # ✅ remove border total area (label & value)
-        ws[f"I{rr}"].border = Border()
-        ws[f"J{rr}"].border = Border()
 
     totals_bottom = totals_top + len(labels) - 1
 
@@ -797,7 +782,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
 
 # ==========================================
-# PDF: saya biarkan seperti kode Anda sebelumnya
+# PDF: biarkan seperti kode Anda (tidak saya ubah)
 # ==========================================
 def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     try:
@@ -1078,10 +1063,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
-
-        alamat = resolve_company_address(text)  # ✅ default = Di tempat (tanpa penjelasan panjang)
+        alamat = resolve_company_address(text)  # ✅ default "Di tempat"
         state["data"]["bill_to"]["address"] = alamat
-
         state["step"] = "inv_shipto_same"
         conversations[sid] = state
 
@@ -1115,10 +1098,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_shipto_name":
         state["data"]["ship_to"]["name"] = text.strip()
-
-        alamat = resolve_company_address(text)  # ✅ default = Di tempat
+        alamat = resolve_company_address(text)  # ✅ default "Di tempat"
         state["data"]["ship_to"]["address"] = alamat
-
         state["step"] = "inv_phone"
         conversations[sid] = state
         out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
