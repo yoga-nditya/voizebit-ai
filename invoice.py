@@ -430,10 +430,12 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     def money(cell):
         cell.number_format = '#,##0'
 
+    # margin cols
     ws.column_dimensions["A"].width = 3
     ws.column_dimensions["B"].width = 3
     ws.column_dimensions["C"].width = 3
 
+    # invoice area D..I
     ws.column_dimensions["D"].width = 7
     ws.column_dimensions["E"].width = 6
     ws.column_dimensions["F"].width = 12
@@ -477,9 +479,12 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.row_dimensions[11].height = 18
     ws.row_dimensions[14].height = 18
 
+    # ======================
+    # Bill/Ship (Bill To stop di F, kolom G kosong)
+    # ======================
     ws["D1"].value = "Bill To:"
     ws["D1"].font = bold
-    ws.merge_cells("D1:G1")
+    ws.merge_cells("D1:F1")  # ✅ stop di F
 
     ws["H1"].value = "Ship To:"
     ws["H1"].font = bold
@@ -498,7 +503,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ] if x])
 
     ws["D2"].value = bill_text
-    ws.merge_cells("D2:G3")
+    ws.merge_cells("D2:F3")  # ✅ stop di F
     ws["D2"].alignment = left
 
     ws["H2"].value = ship_text
@@ -507,7 +512,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     ws["D5"].value = "Phone:"
     ws["D5"].font = bold
-    ws.merge_cells("E5:G5")
+    ws.merge_cells("E5:F5")  # ✅ stop di F
     ws["E5"].value = phone
     ws["E5"].alignment = left_mid
 
@@ -518,10 +523,11 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     ws["D7"].value = "Attn :"
     ws["D7"].font = bold
-    ws.merge_cells("E7:G7")
+    ws.merge_cells("E7:F7")  # ✅ stop di F
     ws["E7"].value = attn
     ws["E7"].alignment = left_mid
 
+    # invoice info kanan
     ws["H6"].value = "Invoice"
     ws["H6"].font = bold
     ws["H6"].alignment = right_mid
@@ -575,6 +581,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     ws["H11"].value = ship_via
     ws["H11"].alignment = center
+
     ws["H13"].value = ship_date
     ws["H13"].alignment = center
 
@@ -688,10 +695,11 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     totals_bottom = totals_top + len(labels) - 1
 
-    # ✅ REQUEST ANDA: totals area TIDAK ADA BORDER LUAR
+    # ✅ totals area: NO BORDER untuk label & angka
+    empty_border = Border()
     for rr in range(totals_top, totals_bottom + 1):
-        for cc in range(8, 10):  # H=8, I=9
-            ws.cell(rr, cc).border = Border(left=None, right=None, top=None, bottom=None)
+        ws[f"H{rr}"].border = empty_border
+        ws[f"I{rr}"].border = empty_border
 
     # ======================
     # Signature box + footer (outer only)
@@ -722,7 +730,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     return f"{fname_base}.xlsx"
 
 
-# PDF: tetap gunakan function Anda sebelumnya (saya tidak ubah)
+# PDF: tetap gunakan function Anda (tidak diubah)
 def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     try:
         folder = str(FILES_DIR)
@@ -1002,7 +1010,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
-        alamat = resolve_company_address(text)
+        alamat = resolve_company_address(text)  # ✅ default selalu "Di tempat" jika tidak ketemu
         state["data"]["bill_to"]["address"] = alamat
         state["step"] = "inv_shipto_same"
         conversations[sid] = state
@@ -1037,7 +1045,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_shipto_name":
         state["data"]["ship_to"]["name"] = text.strip()
-        alamat = resolve_company_address(text)
+        alamat = resolve_company_address(text)  # ✅ default selalu "Di tempat" jika tidak ketemu
         state["data"]["ship_to"]["address"] = alamat
         state["step"] = "inv_phone"
         conversations[sid] = state
