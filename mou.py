@@ -109,17 +109,42 @@ def set_run_font(run, font_name="Times New Roman", size=10, bold=None):
     if bold is not None:
         run.bold = bold
 
+# =========================
+# FIX 1: replace yang tahan run ter-split
+# - Kalau placeholder terpecah antar-run, versi lama gagal replace.
+# - Versi ini: cek full paragraph.text, lalu kalau ada old,
+#   kita rebuild isi paragraf dengan mempertahankan format run pertama.
+# =========================
 def replace_in_runs_keep_format(paragraph, old: str, new: str):
     if not old or not paragraph.text:
         return False
     if old not in paragraph.text:
         return False
+
+    # Jika ada run yang mengandung old utuh, pakai cara lama (lebih aman)
     changed = False
     for run in paragraph.runs:
         if old in run.text:
             run.text = run.text.replace(old, new)
             changed = True
-    return changed
+    if changed:
+        return True
+
+    # Kalau sampai sini: old ada di paragraph.text tapi tidak ada di satu run pun
+    # artinya teks old terpecah antar-run -> lakukan rebuild sederhana.
+    full = paragraph.text
+    replaced = full.replace(old, new)
+    if replaced == full:
+        return False
+
+    if paragraph.runs:
+        # Pertahankan formatting dari run pertama
+        paragraph.runs[0].text = replaced
+        for r in paragraph.runs[1:]:
+            r.text = ""
+    else:
+        paragraph.add_run(replaced)
+    return True
 
 def replace_in_cell_keep_format(cell, old: str, new: str):
     changed = False
@@ -159,7 +184,8 @@ def style_cell_paragraph(cell, align="left", left_indent_pt=0, font="Times New R
 def _center_paragraph_if_contains(paragraph, needles):
     """
     Set paragraf ke CENTER jika text mengandung salah satu 'needles'.
-    Ini tidak mengubah isi text, hanya alignment & indent.
+    Ini tidak mengubah isi text (kecuali bersihin TAB awal yang bikin geser),
+    hanya alignment & indent.
     """
     if not paragraph or not paragraph.text:
         return False
@@ -169,9 +195,26 @@ def _center_paragraph_if_contains(paragraph, needles):
     for n in needles:
         if n and (n in txt):
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            # pastikan tidak ada indent kiri yang bikin terlihat geser
+
+            # FIX 2: pastikan tidak ada indent/tab stop bawaan template yang bikin geser
             paragraph.paragraph_format.left_indent = Pt(0)
             paragraph.paragraph_format.first_line_indent = Pt(0)
+            paragraph.paragraph_format.right_indent = Pt(0)
+
+            # Clear tab stops jika ada (python-docx support)
+            try:
+                paragraph.paragraph_format.tab_stops.clear_all()
+            except Exception:
+                pass
+
+            # Hapus TAB di awal run (sering bikin tampak "ketabs ke kanan")
+            try:
+                for r in paragraph.runs:
+                    if r.text and r.text.startswith("\t"):
+                        r.text = r.text.lstrip("\t")
+            except Exception:
+                pass
+
             return True
     return False
 
