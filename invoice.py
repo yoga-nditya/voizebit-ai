@@ -409,7 +409,7 @@ def _apply_outer_and_vertical_borders(ws, r1, c1, r2, c2, outer_style="medium", 
 
 
 # ==========================================
-# ✅ Excel mengikuti template (mulai dari D)
+# ✅ Excel mengikuti layout PDF (Terms di luar ref-box)
 # ==========================================
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb = Workbook()
@@ -429,10 +429,12 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.sheet_view.zoomScale = 110
 
     bold = Font(bold=True)
+    bold_ul = Font(bold=True, underline="single")
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left = Alignment(horizontal="left", vertical="top", wrap_text=True)
     left_mid = Alignment(horizontal="left", vertical="center", wrap_text=True)
     right = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    right_mid = Alignment(horizontal="right", vertical="center", wrap_text=True)
 
     def money(cell):
         cell.number_format = '#,##0'
@@ -477,6 +479,17 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
+    # (opsional) rapikan tinggi baris agar lebih mirip PDF
+    ws.row_dimensions[1].height = 16
+    ws.row_dimensions[2].height = 34
+    ws.row_dimensions[3].height = 34
+    ws.row_dimensions[5].height = 16
+    ws.row_dimensions[7].height = 16
+    ws.row_dimensions[10].height = 18
+    ws.row_dimensions[11].height = 18
+    ws.row_dimensions[12].height = 16
+    ws.row_dimensions[14].height = 18
+
     # Bill/Ship
     ws["D1"].value = "Bill To:"
     ws["D1"].font = bold
@@ -506,9 +519,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.merge_cells("H2:I3")
     ws["H2"].alignment = left
 
-    ws.row_dimensions[2].height = 30
-    ws.row_dimensions[3].height = 30
-
     ws["D5"].value = "Phone:"
     ws["D5"].font = bold
     ws.merge_cells("E5:G5")
@@ -526,25 +536,26 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["E7"].value = attn
     ws["E7"].alignment = left_mid
 
+    # Invoice info (kanan)
     ws["H6"].value = "Invoice"
     ws["H6"].font = bold
-    ws["H6"].alignment = right
+    ws["H6"].alignment = right_mid
     ws["I6"].value = invoice_no
     ws["I6"].alignment = left_mid
 
     ws["H7"].value = "Date"
     ws["H7"].font = bold
-    ws["H7"].alignment = right
+    ws["H7"].alignment = right_mid
     ws["I7"].value = inv_date
     ws["I7"].alignment = left_mid
 
     ws["H8"].value = "No. Surat Jalan"
     ws["H8"].font = bold
-    ws["H8"].alignment = right
+    ws["H8"].alignment = right_mid
     ws["I8"].value = no_surat_jalan
     ws["I8"].alignment = left_mid
 
-    # Ref box
+    # Ref box (HANYA rows 10-11) -> agar Terms bisa di luar box (mirip PDF)
     ws.merge_cells("D10:E10")
     ws["D10"].value = "Ref No."
     ws["D10"].font = bold
@@ -563,12 +574,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["I10"].font = bold
     ws["I10"].alignment = center
 
-    ws["H12"].value = "Terms"
-    ws["H12"].font = bold
-    ws["H12"].alignment = center
-    ws["I12"].value = terms
-    ws["I12"].alignment = center
-
     ws.merge_cells("D11:E11")
     ws["D11"].value = ref_no
     ws["D11"].alignment = center
@@ -583,16 +588,25 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["I11"].value = ship_date
     ws["I11"].alignment = center
 
-    _apply_outer_and_vertical_borders(ws, 10, 4, 12, 9)
+    # 🔧 Border ref-box hanya 10-11 (bukan 10-12)
+    _apply_outer_and_vertical_borders(ws, 10, 4, 11, 9)
+
+    # 🔧 Terms (di luar ref-box, mirip PDF)
+    ws["H12"].value = "Terms"
+    ws["H12"].font = bold
+    ws["H12"].alignment = right_mid
+
+    ws["I12"].value = terms
+    ws["I12"].alignment = left_mid
 
     # Items table header
     ws["D14"].value = "Qty"
-    ws["E14"].value = ""  # header unit kosong
+    ws["E14"].value = ""  # header unit kosong (sesuai PDF)
     ws["F14"].value = "Date"
     ws["G14"].value = "Description"
     ws["H14"].value = "Price"
     ws["I14"].value = "Amount (IDR)"
-    for c in ["D","E","F","G","H","I"]:
+    for c in ["D", "E", "F", "G", "H", "I"]:
         ws[f"{c}14"].font = bold
         ws[f"{c}14"].alignment = center
 
@@ -645,7 +659,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     ws.merge_cells(f"D{base_row}:G{base_row}")
     ws[f"D{base_row}"].value = "Please Transfer Full Amount to:"
-    ws[f"D{base_row}"].font = bold
+    ws[f"D{base_row}"].font = bold_ul
     ws[f"D{base_row}"].alignment = left_mid
 
     left_lines = [
