@@ -38,12 +38,8 @@ def normalize_id_number_text(text: str) -> str:
     if not text:
         return text
     t = text.strip()
-
-    # remove thousand separators like 1.250.000 or 1,250,000
-    t = re.sub(r'(?<=\d)[\.,](?=\d{3}(\D|$))', '', t)
-
-    # decimal comma -> decimal dot
-    t = re.sub(r'(?<=\d),(?=\d)', '.', t)
+    t = re.sub(r'(?<=\d)[\.,](?=\d{3}(\D|$))', '', t)  # thousand separators
+    t = re.sub(r'(?<=\d),(?=\d)', '.', t)  # decimal comma -> dot
     return t
 
 
@@ -75,6 +71,12 @@ def _tokenize_id_words(s: str):
 
 
 def _parse_id_integer_words(tokens):
+    """
+    Parse integer words (no 'koma' part).
+    Supports:
+    - dua ribu tiga ratus lima puluh -> 2350
+    - seratus / seribu style
+    """
     total = 0
     current = 0
 
@@ -82,6 +84,7 @@ def _parse_id_integer_words(tokens):
     while i < len(tokens):
         w = tokens[i]
 
+        # numeric token
         if re.fullmatch(r'\d+(?:\.\d+)?', w):
             try:
                 current += int(float(w))
@@ -90,6 +93,7 @@ def _parse_id_integer_words(tokens):
             i += 1
             continue
 
+        # special "seratus", "seribu"
         if w == "seratus":
             current += 100
             i += 1
@@ -100,19 +104,23 @@ def _parse_id_integer_words(tokens):
             i += 1
             continue
 
+        # direct small numbers
         if w in _ID_SMALL:
             val = _ID_SMALL[w]
 
+            # belas: dua belas
             if i + 1 < len(tokens) and tokens[i + 1] == "belas":
                 current += 10 + val
                 i += 2
                 continue
 
+            # puluh: dua puluh
             if i + 1 < len(tokens) and tokens[i + 1] == "puluh":
                 current += val * 10
                 i += 2
                 continue
 
+            # ratus: dua ratus
             if i + 1 < len(tokens) and tokens[i + 1] == "ratus":
                 current += val * 100
                 i += 2
@@ -122,6 +130,7 @@ def _parse_id_integer_words(tokens):
             i += 1
             continue
 
+        # scale words
         if w in _ID_SCALES:
             scale = _ID_SCALES[w]
             if current == 0:
@@ -137,11 +146,20 @@ def _parse_id_integer_words(tokens):
 
 
 def words_to_number_id(text: str):
+    """
+    Return float if possible.
+    Handles:
+    - "dua koma lima" -> 2.5
+    - "dua koma" -> 2.5 (default .5)
+    - "dua ribu" -> 2000
+    - "dua koma lima ribu" -> 2500
+    """
     if not text:
         return None
 
     raw = text.strip().lower()
 
+    # numeric direct
     norm = normalize_id_number_text(raw)
     if re.fullmatch(r'\d+(?:\.\d+)?', norm):
         try:
@@ -153,6 +171,7 @@ def words_to_number_id(text: str):
     if not tokens:
         return None
 
+    # split by "koma"
     if "koma" in tokens:
         k = tokens.index("koma")
         left = tokens[:k]
@@ -160,6 +179,7 @@ def words_to_number_id(text: str):
 
         left_int = _parse_id_integer_words(left) if left else 0
 
+        # "dua koma" -> .5
         if not right:
             return float(left_int) + 0.5
 
@@ -177,6 +197,7 @@ def words_to_number_id(text: str):
         frac_str = "".join(digits) if digits else "5"
         frac_val = float("0." + frac_str)
 
+        # optional scale after koma
         scale = None
         for w in right:
             if w in _ID_SCALES:
@@ -188,10 +209,18 @@ def words_to_number_id(text: str):
             val *= scale
         return val
 
+    # no koma
     return float(_parse_id_integer_words(tokens))
 
 
 def parse_amount_id(text: str) -> int:
+    """
+    Money amount (Rp) -> int.
+    Supports:
+    - "dua ribu" -> 2000
+    - "dua koma lima ribu" -> 2500
+    - "1.250.000" -> 1250000
+    """
     if not text:
         return 0
 
@@ -217,6 +246,11 @@ def parse_amount_id(text: str) -> int:
 
 
 def parse_qty_id(text: str) -> float:
+    """
+    Qty supports:
+    - "dua koma lima" -> 2.5
+    - "2,5" -> 2.5
+    """
     if not text:
         return 0.0
 
@@ -249,7 +283,9 @@ def normalize_voice_strip(text: str) -> str:
     return text
 
 
-# ✅ NEW: paksa alamat jadi "Di tempat" kalau kosong / kalau berupa kalimat gagal pencarian
+# =========================
+# ✅ alamat default selalu "Di tempat" jika kosong / error / kalimat "tidak ditemukan"
+# =========================
 def _sanitize_company_address(addr: str) -> str:
     a = (addr or "").strip()
     if not a:
@@ -373,15 +409,14 @@ def _border(left=None, right=None, top=None, bottom=None):
 
 def _apply_vertical_box_borders(ws, r1, c1, r2, c2, separators_cols, outer_style="medium", inner_style="thin"):
     """
-    FIX untuk 'border gap' di Excel.
+    Border aman untuk merged cells:
     - Outer border = medium
-    - Separator vertical = thin (dipasang BOTH: right di col sebelumnya + left di col separator)
-    - Tidak bikin garis horizontal di dalam box (selain outer top/bottom)
+    - Vertical separator = thin (dipasang di kanan/kiri)
+    - Tanpa garis horizontal dalam box (kecuali outer top/bottom)
     """
     outer = _side(outer_style)
     inner = _side(inner_style)
-
-    sep_set = set(separators_cols)  # kolom yang menjadi batas kiri separator (misal F/H/I)
+    sep_set = set(separators_cols)
 
     for r in range(r1, r2 + 1):
         for c in range(c1, c2 + 1):
@@ -390,7 +425,6 @@ def _apply_vertical_box_borders(ws, r1, c1, r2, c2, separators_cols, outer_style
             top_side = None
             bottom_side = None
 
-            # outer
             if c == c1:
                 left_side = outer
             if c == c2:
@@ -400,8 +434,7 @@ def _apply_vertical_box_borders(ws, r1, c1, r2, c2, separators_cols, outer_style
             if r == r2:
                 bottom_side = outer
 
-            # vertical separators: pasang "inner" di batas kolom
-            # cara aman: kolom separator punya LEFT inner, dan kolom sebelumnya punya RIGHT inner
+            # separator: kolom separator punya LEFT inner, kolom sebelumnya punya RIGHT inner
             if c in sep_set and c != c1:
                 left_side = inner if left_side is None else left_side
             if (c + 1) in sep_set and c != c2:
@@ -411,7 +444,7 @@ def _apply_vertical_box_borders(ws, r1, c1, r2, c2, separators_cols, outer_style
 
 
 # ==========================================
-# ✅ Excel layout final (gap hilang, shipto tidak geser, payment naik)
+# ✅ Excel FINAL (D:J)
 # ==========================================
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb = Workbook()
@@ -432,6 +465,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     bold = Font(bold=True)
     bold_ul = Font(bold=True, underline="single")
+
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left = Alignment(horizontal="left", vertical="top", wrap_text=True)
     left_mid = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -441,18 +475,19 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     def money(cell):
         cell.number_format = '#,##0'
 
-    # ✅ kecilkan margin A-C supaya blok Ship To tidak keliatan "geser 2"
+    # margin kiri
     ws.column_dimensions["A"].width = 1
     ws.column_dimensions["B"].width = 1
     ws.column_dimensions["C"].width = 1
 
-    # D-I invoice area
-    ws.column_dimensions["D"].width = 7
-    ws.column_dimensions["E"].width = 6
-    ws.column_dimensions["F"].width = 12
-    ws.column_dimensions["G"].width = 45
-    ws.column_dimensions["H"].width = 14
-    ws.column_dimensions["I"].width = 18
+    # D-J invoice area
+    ws.column_dimensions["D"].width = 7   # Qty
+    ws.column_dimensions["E"].width = 6   # Unit
+    ws.column_dimensions["F"].width = 12  # Date
+    ws.column_dimensions["G"].width = 45  # Desc
+    ws.column_dimensions["H"].width = 14  # Price
+    ws.column_dimensions["I"].width = 18  # Amount part 1
+    ws.column_dimensions["J"].width = 18  # Amount part 2 / Terms column
 
     payment = inv.get("payment") or {}
     defaults = {
@@ -481,7 +516,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    # rapikan row heights
+    # row heights
     ws.row_dimensions[1].height = 16
     ws.row_dimensions[2].height = 34
     ws.row_dimensions[3].height = 34
@@ -493,14 +528,16 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.row_dimensions[13].height = 18
     ws.row_dimensions[14].height = 18
 
-    # Bill/Ship
+    # ==========================================
+    # Bill To: D:F | Ship To: H:J  ✅ (sesuai request)
+    # ==========================================
     ws["D1"].value = "Bill To:"
     ws["D1"].font = bold
-    ws.merge_cells("D1:G1")
+    ws.merge_cells("D1:F1")
 
     ws["H1"].value = "Ship To:"
     ws["H1"].font = bold
-    ws.merge_cells("H1:I1")
+    ws.merge_cells("H1:J1")
 
     bill_text = "\n".join([x for x in [
         (bill_to.get("name") or "").strip(),
@@ -515,51 +552,55 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ] if x])
 
     ws["D2"].value = bill_text
-    ws.merge_cells("D2:G3")
+    ws.merge_cells("D2:F3")
     ws["D2"].alignment = left
 
     ws["H2"].value = ship_text
-    ws.merge_cells("H2:I3")
+    ws.merge_cells("H2:J3")
     ws["H2"].alignment = left
 
+    # Phone (D..F)
     ws["D5"].value = "Phone:"
     ws["D5"].font = bold
-    ws.merge_cells("E5:G5")
+    ws.merge_cells("E5:F5")
     ws["E5"].value = phone
     ws["E5"].alignment = left_mid
 
+    # Fax (H..J)
     ws["H5"].value = "Fax:"
     ws["H5"].font = bold
+    ws.merge_cells("I5:J5")
     ws["I5"].value = fax
     ws["I5"].alignment = left_mid
 
+    # Attn (D..F)
     ws["D7"].value = "Attn :"
     ws["D7"].font = bold
-    ws.merge_cells("E7:G7")
+    ws.merge_cells("E7:F7")
     ws["E7"].value = attn
     ws["E7"].alignment = left_mid
 
-    # Invoice info (kanan)
-    ws["H6"].value = "Invoice"
-    ws["H6"].font = bold
-    ws["H6"].alignment = right_mid
-    ws["I6"].value = invoice_no
-    ws["I6"].alignment = left_mid
+    # Invoice info kanan (I..J)
+    ws["I6"].value = "Invoice"
+    ws["I6"].font = bold
+    ws["I6"].alignment = right_mid
+    ws["J6"].value = invoice_no
+    ws["J6"].alignment = left_mid
 
-    ws["H7"].value = "Date"
-    ws["H7"].font = bold
-    ws["H7"].alignment = right_mid
-    ws["I7"].value = inv_date
-    ws["I7"].alignment = left_mid
+    ws["I7"].value = "Date"
+    ws["I7"].font = bold
+    ws["I7"].alignment = right_mid
+    ws["J7"].value = inv_date
+    ws["J7"].alignment = left_mid
 
-    ws["H8"].value = "No. Surat Jalan"
-    ws["H8"].font = bold
-    ws["H8"].alignment = right_mid
-    ws["I8"].value = no_surat_jalan
-    ws["I8"].alignment = left_mid
+    ws["I8"].value = "No. Surat Jalan"
+    ws["I8"].font = bold
+    ws["I8"].alignment = right_mid
+    ws["J8"].value = no_surat_jalan
+    ws["J8"].alignment = left_mid
 
     # ==========================================
-    # Ref box (D10:I13) — separators di F, H, I
+    # Ref box (D10:J13) + Terms di kolom J (merge) + Ship Via/Date 1 kolom (H:I merge)
     # ==========================================
     ws.merge_cells("D10:E10")
     ws["D10"].value = "Ref No."
@@ -571,13 +612,14 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["F10"].font = bold
     ws["F10"].alignment = center
 
+    ws.merge_cells("H10:I10")
     ws["H10"].value = "Ship Via"
     ws["H10"].font = bold
     ws["H10"].alignment = center
 
-    ws["I10"].value = "Terms"
-    ws["I10"].font = bold
-    ws["I10"].alignment = center
+    ws["J10"].value = "Terms"
+    ws["J10"].font = bold
+    ws["J10"].alignment = center
 
     ws.merge_cells("D11:E11")
     ws["D11"].value = ref_no
@@ -587,26 +629,28 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["F11"].value = sales_person
     ws["F11"].alignment = center
 
+    ws.merge_cells("H11:I11")
     ws["H11"].value = ship_via
     ws["H11"].alignment = center
 
-    ws.merge_cells("I11:I13")
-    ws["I11"].value = terms
-    ws["I11"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
+    ws.merge_cells("H12:I12")
     ws["H12"].value = "Ship Date"
     ws["H12"].font = bold
     ws["H12"].alignment = center
 
+    ws.merge_cells("H13:I13")
     ws["H13"].value = ship_date
     ws["H13"].alignment = center
 
-    # ✅ FIX gap: border ref-box pakai fungsi baru (dua sisi separator)
-    # separator columns = F(6), H(8), I(9)
-    _apply_vertical_box_borders(ws, 10, 4, 13, 9, separators_cols=[6, 8, 9])
+    ws.merge_cells("J11:J13")
+    ws["J11"].value = terms
+    ws["J11"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    # separators di: F(6), H(8), J(10)
+    _apply_vertical_box_borders(ws, 10, 4, 13, 10, separators_cols=[6, 8, 10])
 
     # ==========================================
-    # Items table — ✅ mulai row 14 (tidak ada gap 1 baris)
+    # Items table header (D14:J14) -> Amount merge I:J
     # ==========================================
     header_row = 14
     ws[f"D{header_row}"].value = "Qty"
@@ -614,24 +658,31 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws[f"F{header_row}"].value = "Date"
     ws[f"G{header_row}"].value = "Description"
     ws[f"H{header_row}"].value = "Price"
+    ws.merge_cells(f"I{header_row}:J{header_row}")
     ws[f"I{header_row}"].value = "Amount (IDR)"
+
     for c in ["D", "E", "F", "G", "H", "I"]:
         ws[f"{c}{header_row}"].font = bold
         ws[f"{c}{header_row}"].alignment = center
 
     items = inv.get("items") or []
     start_row = header_row + 1
-    max_rows = max(10, len(items))
-    subtotal = 0
 
+    # (kalau mau tetap 10 baris kosong, ubah jadi max(10, len(items)))
+    max_rows = max(1, len(items))
+
+    subtotal = 0
     for idx in range(max_rows):
         r = start_row + idx
+
         ws[f"D{r}"].alignment = center
         ws[f"E{r}"].alignment = center
         ws[f"F{r}"].alignment = center
         ws[f"G{r}"].alignment = left
         ws[f"H{r}"].alignment = right
         ws[f"I{r}"].alignment = right
+        ws[f"J{r}"].alignment = right
+        ws.merge_cells(f"I{r}:J{r}")
 
         if idx < len(items):
             it = items[idx]
@@ -654,12 +705,11 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     last_table_row = start_row + max_rows - 1
 
-    # ✅ FIX gap: border table pakai fungsi baru juga
-    # separator columns = E(5), F(6), G(7), H(8), I(9) => batas kiri kolom-kolom itu
-    _apply_vertical_box_borders(ws, header_row, 4, last_table_row, 9, separators_cols=[5, 6, 7, 8, 9])
+    # separators: E(5), F(6), G(7), H(8), I(9)  (J outer)
+    _apply_vertical_box_borders(ws, header_row, 4, last_table_row, 10, separators_cols=[5, 6, 7, 8, 9])
 
     # ==========================================
-    # Payment + totals (lebih naik karena header_row naik)
+    # Payment + totals
     # ==========================================
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
@@ -669,7 +719,8 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ppn = int(round(total_before_ppn * ppn_rate))
     balance = total_before_ppn + ppn - deposit
 
-    base_row = last_table_row + 1  # ini sudah rapet (tanpa gap extra)
+    # ✅ turun 1 line dari sebelumnya
+    base_row = last_table_row + 2
 
     ws.merge_cells(f"D{base_row}:G{base_row}")
     ws[f"D{base_row}"].value = "Please Transfer Full Amount to:"
@@ -695,38 +746,38 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ("Less: Deposit", deposit, False),
         ("Balance Due", balance, True),
     ]
+
     totals_top = base_row
     for i, (lab, val, is_bold) in enumerate(labels):
         rr = totals_top + i
+        ws.merge_cells(f"H{rr}:I{rr}")
         ws[f"H{rr}"].value = lab
         ws[f"H{rr}"].alignment = right
         ws[f"H{rr}"].font = Font(bold=is_bold)
 
-        ws[f"I{rr}"].value = val
-        ws[f"I{rr}"].alignment = right
-        ws[f"I{rr}"].font = Font(bold=is_bold)
-        money(ws[f"I{rr}"])
+        ws[f"J{rr}"].value = val
+        ws[f"J{rr}"].alignment = right
+        ws[f"J{rr}"].font = Font(bold=is_bold)
+        money(ws[f"J{rr}"])
 
     totals_bottom = totals_top + len(labels) - 1
-    # border totals box (H..I)
-    _apply_vertical_box_borders(ws, totals_top, 8, totals_bottom, 9, separators_cols=[9])
+    _apply_vertical_box_borders(ws, totals_top, 8, totals_bottom, 10, separators_cols=[10])
 
     # Signature box + footer
     box_top = totals_bottom + 2
     box_bottom = box_top + 6
 
-    ws.merge_cells(f"G{box_top}:I{box_top}")
-    ws[f"G{box_top}"].value = "PT. Sarana Trans Bersama Jaya"
-    ws[f"G{box_top}"].alignment = center
-    ws[f"G{box_top}"].font = bold
+    ws.merge_cells(f"H{box_top}:J{box_top}")
+    ws[f"H{box_top}"].value = "PT. Sarana Trans Bersama Jaya"
+    ws[f"H{box_top}"].alignment = center
+    ws[f"H{box_top}"].font = bold
 
-    # border signature (G..I)
-    _apply_vertical_box_borders(ws, box_top, 7, box_bottom, 9, separators_cols=[8, 9])
+    _apply_vertical_box_borders(ws, box_top, 8, box_bottom, 10, separators_cols=[10])
 
     footer_row = box_bottom + 1
-    ws.merge_cells(f"G{footer_row}:I{footer_row}")
-    ws[f"G{footer_row}"].value = "Please kindly fax to our attention upon receipt"
-    ws[f"G{footer_row}"].alignment = center
+    ws.merge_cells(f"H{footer_row}:J{footer_row}")
+    ws[f"H{footer_row}"].value = "Please kindly fax to our attention upon receipt"
+    ws[f"H{footer_row}"].alignment = center
 
     try:
         folder = str(FILES_DIR)
@@ -740,8 +791,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
 
 # ==========================================
-# PDF (tetap seperti versi Anda yang terakhir)
-# Note: gap di screenshot itu Excel, bukan PDF.
+# ✅ PDF (tetap seperti sebelumnya)
 # ==========================================
 def create_invoice_pdf(inv: dict, fname_base: str) -> str:
     try:
@@ -896,7 +946,8 @@ def create_invoice_pdf(inv: dict, fname_base: str) -> str:
 
     row_y = header_y - 18
     subtotal = 0
-    max_rows = 10
+
+    max_rows = max(1, len(items))
     for idx in range(max_rows):
         if idx < len(items):
             it = items[idx]
@@ -1025,10 +1076,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
-
         alamat = resolve_company_address(text)
         state["data"]["bill_to"]["address"] = alamat
-
         state["step"] = "inv_shipto_same"
         conversations[sid] = state
 
@@ -1062,10 +1111,8 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_shipto_name":
         state["data"]["ship_to"]["name"] = text.strip()
-
         alamat = resolve_company_address(text)
         state["data"]["ship_to"]["address"] = alamat
-
         state["step"] = "inv_phone"
         conversations[sid] = state
         out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
