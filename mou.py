@@ -509,6 +509,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
 
         out_text = (
             "Baik, saya akan membantu menyusun <b>MoU</b>.<br><br>"
+            "Pertanyaan 1: <b>Nama perusahaan (Pihak Pertama / Penghasil Limbah)?</b>"
         )
 
         history_id_created = None
