@@ -105,6 +105,44 @@ def parse_amount_id(text: str) -> int:
         return int(digits) if digits else 0
 
 
+# ✅ NEW (MINIMAL): anggap hasil pencarian alamat "tidak ditemukan" = kosong
+def normalize_found_address(addr: str) -> str:
+    if not addr:
+        return ""
+    t = str(addr).strip()
+    if not t:
+        return ""
+
+    lower = t.lower()
+
+    # kalau hasil search berupa teks penolakan / not found, treat as empty
+    not_found_patterns = [
+        r"tidak\s*ditemukan",
+        r"tidak\s*ketemu",
+        r"nggak\s*ditemukan",
+        r"gak\s*ditemukan",
+        r"ga\s*ditemukan",
+        r"tidak\s*ada",
+        r"belum\s*ada",
+        r"unknown",
+        r"not\s*found",
+        r"no\s*result",
+        r"tidak\s*tersedia",
+        r"data\s*tidak\s*tersedia",
+    ]
+
+    for p in not_found_patterns:
+        if re.search(p, lower):
+            return ""
+
+    # kadang ada jawaban terlalu generik yang bukan alamat
+    # (opsional, tapi aman): kalau terlalu pendek & bukan alamat
+    if len(t) <= 6 and lower in ("-", "none", "null", "n/a"):
+        return ""
+
+    return t
+
+
 # =========================
 # CHAT HANDLER QUOTATION
 # =========================
@@ -150,9 +188,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
     if state.get("step") == 'nama_perusahaan':
         state['data']['nama_perusahaan'] = text
 
-        alamat = search_company_address(text).strip()
+        # ✅ FIX MINIMAL DI SINI:
+        alamat = normalize_found_address(search_company_address(text))
         if not alamat:
-            alamat = search_company_address_ai(text).strip()
+            alamat = normalize_found_address(search_company_address_ai(text))
         if not alamat:
             alamat = "Di tempat"
 
