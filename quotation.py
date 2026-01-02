@@ -123,7 +123,11 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         state['data'] = {'nomor_depan': nomor_depan, 'items_limbah': [], 'bulan_romawi': now.strftime('%m')}
         conversations[sid] = state
 
-        out_text = f"Baik, saya bantu buatkan quotation.<br><br>✅ Nomor Surat: <b>{nomor_depan}</b><br><br>❓ <b>1. Nama Perusahaan?</b>"
+        out_text = (
+            f"Baik, saya akan membantu membuat quotation.<br><br>"
+            f"Nomor surat: <b>{nomor_depan}</b><br><br>"
+            f"Pertanyaan 1: <b>Nama perusahaan?</b>"
+        )
 
         history_id_created = None
         if not history_id_in:
@@ -158,9 +162,11 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         conversations[sid] = state
 
         out_text = (
-            f"✅ Nama: <b>{text}</b><br>✅ Alamat: <b>{alamat}</b><br><br>"
-            f"📦 <b>Item #1</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
-            f"<i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
+            f"Nama perusahaan: <b>{text}</b><br>"
+            f"Alamat: <b>{alamat}</b><br><br>"
+            f"Item 1<br>"
+            f"Pertanyaan 2: <b>Sebutkan jenis limbah atau kode limbah</b><br>"
+            f"<i>Contoh: A102d atau aki baterai bekas</i>"
         )
 
         if history_id_in:
@@ -176,7 +182,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
             state['step'] = 'manual_jenis_limbah'
             conversations[sid] = state
 
-            out_text = "✅ Kode: <b>NON B3</b><br><br>❓ <b>2A. Jenis Limbah (manual) apa?</b>"
+            out_text = (
+                "Kode limbah: <b>NON B3</b><br><br>"
+                "Pertanyaan 2A: <b>Jenis limbah (manual) apa?</b>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -189,7 +198,12 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
             state['data']['current_item']['satuan'] = data_limbah['satuan']
             state['step'] = 'harga'
             conversations[sid] = state
-            out_text = f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"
+            out_text = (
+                f"Kode limbah: <b>{kode}</b><br>"
+                f"Jenis limbah: <b>{data_limbah['jenis']}</b><br>"
+                f"Satuan: <b>{data_limbah['satuan']}</b><br><br>"
+                f"Pertanyaan 3: <b>Harga (Rp)?</b>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -202,15 +216,20 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
                 state['data']['current_item']['satuan'] = data_limbah['satuan']
                 state['step'] = 'harga'
                 conversations[sid] = state
-                out_text = f"✅ Kode: <b>{kode}</b><br>✅ Jenis: <b>{data_limbah['jenis']}</b><br>✅ Satuan: <b>{data_limbah['satuan']}</b><br><br>❓ <b>3. Harga (Rp)?</b>"
+                out_text = (
+                    f"Kode limbah: <b>{kode}</b><br>"
+                    f"Jenis limbah: <b>{data_limbah['jenis']}</b><br>"
+                    f"Satuan: <b>{data_limbah['satuan']}</b><br><br>"
+                    f"Pertanyaan 3: <b>Harga (Rp)?</b>"
+                )
                 if history_id_in:
                     db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                     db_update_state(int(history_id_in), state)
                 return {"text": out_text, "history_id": history_id_in}
             else:
                 out_text = (
-                    f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan dalam database.<br><br>"
-                    "Silakan coba lagi dengan:<br>"
+                    f"Maaf, data limbah <b>{text}</b> tidak ditemukan.<br><br>"
+                    "Silakan coba lagi dengan salah satu format berikut:<br>"
                     "• Kode limbah (contoh: A102d, B105d)<br>"
                     "• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)<br>"
                     "• Atau ketik <b>NON B3</b> untuk input manual"
@@ -224,7 +243,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         state['data']['current_item']['jenis_limbah'] = text
         state['step'] = 'manual_satuan'
         conversations[sid] = state
-        out_text = f"✅ Jenis (manual): <b>{text}</b><br><br>❓ <b>2B. Satuan (manual) apa?</b>"
+        out_text = (
+            f"Jenis limbah (manual): <b>{text}</b><br><br>"
+            "Pertanyaan 2B: <b>Satuan (manual) apa?</b>"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -234,7 +256,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         state['data']['current_item']['satuan'] = text
         state['step'] = 'harga'
         conversations[sid] = state
-        out_text = f"✅ Satuan (manual): <b>{text}</b><br><br>❓ <b>3. Harga (Rp)?</b>"
+        out_text = (
+            f"Satuan (manual): <b>{text}</b><br><br>"
+            "Pertanyaan 3: <b>Harga (Rp)?</b>"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -248,7 +273,11 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         state['step'] = 'tambah_item'
         conversations[sid] = state
         harga_formatted = format_rupiah(harga_converted)
-        out_text = f"✅ Item #{num} tersimpan!<br>💰 Harga: <b>Rp {harga_formatted}</b><br><br>❓ <b>Tambah item lagi?</b> (ya/tidak)"
+        out_text = (
+            f"Item {num} tersimpan.<br>"
+            f"Harga: <b>Rp {harga_formatted}</b><br><br>"
+            "Pertanyaan: <b>Tambah item lagi?</b> (ya/tidak)"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -256,7 +285,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
 
     if state.get("step") == 'tambah_item':
         if re.match(r'^\d+', text.strip()):
-            out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
+            out_text = (
+                "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+                "Pertanyaan: <b>Tambah item lagi?</b>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             return {"text": out_text, "history_id": history_id_in}
@@ -266,7 +298,11 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
             state['step'] = 'jenis_kode_limbah'
             state['data']['current_item'] = {}
             conversations[sid] = state
-            out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>2. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas')</i>"
+            out_text = (
+                f"Item {num+1}<br>"
+                "Pertanyaan 2: <b>Sebutkan jenis limbah atau kode limbah</b><br>"
+                "<i>Contoh: A102d atau aki baterai bekas</i>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -275,13 +311,20 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         if 'tidak' in lower or 'skip' in lower or 'lewat' in lower or 'gak' in lower or 'nggak' in lower:
             state['step'] = 'harga_transportasi'
             conversations[sid] = state
-            out_text = f"✅ Total: <b>{len(state['data']['items_limbah'])} item</b><br><br>❓ <b>4. Biaya Transportasi (Rp)?</b><br><i>Satuan: ritase</i>"
+            out_text = (
+                f"Jumlah item: <b>{len(state['data']['items_limbah'])}</b><br><br>"
+                "Pertanyaan 4: <b>Biaya transportasi (Rp)?</b><br>"
+                "<i>Satuan: ritase</i>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
+        out_text = (
+            "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+            "Pertanyaan: <b>Tambah item lagi?</b>"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
         return {"text": out_text, "history_id": history_id_in}
@@ -292,7 +335,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         state['step'] = 'tanya_mou'
         conversations[sid] = state
         transportasi_formatted = format_rupiah(transportasi_converted)
-        out_text = f"✅ Transportasi: <b>Rp {transportasi_formatted}/ritase</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
+        out_text = (
+            f"Biaya transportasi: <b>Rp {transportasi_formatted}/ritase</b><br><br>"
+            "Pertanyaan 5: <b>Tambahkan biaya MoU?</b> (ya/tidak)"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -300,7 +346,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
 
     if state.get("step") == 'tanya_mou':
         if re.match(r'^\d+', text.strip()):
-            out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
+            out_text = (
+                "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+                "Pertanyaan 5: <b>Tambahkan biaya MoU?</b> (ya/tidak)"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             return {"text": out_text, "history_id": history_id_in}
@@ -308,7 +357,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         if 'ya' in lower or 'iya' in lower:
             state['step'] = 'harga_mou'
             conversations[sid] = state
-            out_text = "❓ <b>Biaya MoU (Rp)?</b><br><i>Satuan: Tahun</i>"
+            out_text = (
+                "Pertanyaan: <b>Biaya MoU (Rp)?</b><br>"
+                "<i>Satuan: tahun</i>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -318,13 +370,20 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
             state['data']['harga_mou'] = None
             state['step'] = 'tanya_termin'
             conversations[sid] = state
-            out_text = "❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"
+            out_text = (
+                "Pertanyaan 6: <b>Edit termin pembayaran?</b><br>"
+                "<i>Default: 14 hari</i><br>"
+                "(Ketik angka, atau ketik <b>tidak</b> untuk menggunakan default.)"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>5. Tambah Biaya MoU?</b> (ya/tidak)"
+        out_text = (
+            "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+            "Pertanyaan 5: <b>Tambahkan biaya MoU?</b> (ya/tidak)"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
         return {"text": out_text, "history_id": history_id_in}
@@ -335,7 +394,12 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         state['step'] = 'tanya_termin'
         conversations[sid] = state
         mou_formatted = format_rupiah(mou_converted)
-        out_text = f"✅ MoU: <b>Rp {mou_formatted}/Tahun</b><br><br>❓ <b>6. Edit Termin Pembayaran?</b><br><i>Default: 14 hari</i><br>(ketik angka atau 'tidak' untuk default)"
+        out_text = (
+            f"Biaya MoU: <b>Rp {mou_formatted}/tahun</b><br><br>"
+            "Pertanyaan 6: <b>Edit termin pembayaran?</b><br>"
+            "<i>Default: 14 hari</i><br>"
+            "(Ketik angka, atau ketik <b>tidak</b> untuk menggunakan default.)"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -353,9 +417,6 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
         base_fname = f"Quotation - {safe_pt}" if safe_pt else "Quotation - Penawaran"
         fname = (lambda base: base if base else "Quotation - Penawaran")(base_fname)
 
-        # pakai helper asli kamu: make_unique_filename_base ada di file awal,
-        # tapi karena modul ini terpisah dan user minta 4 file, kita pakai pola nama tetap.
-        # (Kalau kamu mau persis sama unique filename, tinggal copy fungsi itu ke sini)
         fname = base_fname
 
         docx = create_docx(state['data'], fname)
@@ -400,7 +461,10 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
             )
 
         termin_terbilang = angka_ke_terbilang(state['data']['termin_hari'])
-        out_text = f"✅ Termin: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>🎉 <b>Quotation berhasil dibuat!</b>"
+        out_text = (
+            f"Termin pembayaran: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>"
+            "<b>Quotation berhasil dibuat.</b>"
+        )
         db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
 
         return {"text": out_text, "files": files, "history_id": history_id}

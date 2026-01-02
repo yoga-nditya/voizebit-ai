@@ -39,7 +39,7 @@ def normalize_id_number_text(text: str) -> str:
 
 
 # =========================
-# ✅ Improved Indonesian words-to-number (supports koma, ribu, juta, dll)
+# Improved Indonesian words-to-number (supports koma, ribu, juta, dll)
 # =========================
 _ID_SMALL = {
     "nol": 0, "kosong": 0,
@@ -240,7 +240,7 @@ def normalize_voice_strip(text: str) -> str:
 
 
 # =========================
-# ✅ Address: kalau hasil search berisi kalimat panjang/penjelasan -> pakai "Di tempat"
+# Address: kalau hasil search berisi kalimat panjang/penjelasan -> pakai "Di tempat"
 # =========================
 def _sanitize_company_address(addr: str) -> str:
     a = (addr or "").strip()
@@ -268,7 +268,6 @@ def _sanitize_company_address(addr: str) -> str:
     if any(m in low for m in bad_markers):
         return "Di tempat"
 
-    # kalau terlalu panjang (biasanya penjelasan)
     if len(a) > 90:
         return "Di tempat"
 
@@ -428,13 +427,7 @@ def set_outer_border_only(ws, r1, c1, r2, c2, style="medium"):
 
 
 # ==========================================
-# ✅ Excel layout seperti template (gambar kedua)
-# - Area invoice D..J
-# - Bill To: D:F
-# - Ship To: H:J
-# - Ref box: D..J (Terms di J)
-# - Items: D..J (Description merge G:H, Price di I, Amount di J)
-# - Totals: label di I tanpa border, nilai di J dengan border tipis per baris
+# Excel layout seperti template (gambar kedua)
 # ==========================================
 def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     wb = Workbook()
@@ -465,19 +458,17 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     def money(cell):
         cell.number_format = "#,##0"
 
-    # margin cols
     ws.column_dimensions["A"].width = 3
     ws.column_dimensions["B"].width = 3
     ws.column_dimensions["C"].width = 3
 
-    # invoice area D..J
-    ws.column_dimensions["D"].width = 7    # Qty
-    ws.column_dimensions["E"].width = 6    # Unit
-    ws.column_dimensions["F"].width = 12   # Date
-    ws.column_dimensions["G"].width = 26   # Desc part 1
-    ws.column_dimensions["H"].width = 19   # Desc part 2
-    ws.column_dimensions["I"].width = 14   # Price
-    ws.column_dimensions["J"].width = 18   # Amount/Terms
+    ws.column_dimensions["D"].width = 7
+    ws.column_dimensions["E"].width = 6
+    ws.column_dimensions["F"].width = 12
+    ws.column_dimensions["G"].width = 26
+    ws.column_dimensions["H"].width = 19
+    ws.column_dimensions["I"].width = 14
+    ws.column_dimensions["J"].width = 18
 
     payment = inv.get("payment") or {}
     defaults = {
@@ -506,7 +497,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     terms = inv.get("terms") or ""
     no_surat_jalan = inv.get("no_surat_jalan") or ""
 
-    # row heights
     ws.row_dimensions[1].height = 16
     ws.row_dimensions[2].height = 34
     ws.row_dimensions[3].height = 34
@@ -518,16 +508,13 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.row_dimensions[13].height = 18
     ws.row_dimensions[14].height = 18
 
-    # ======================
-    # Bill To / Ship To
-    # ======================
     ws["D1"].value = "Bill To:"
     ws["D1"].font = bold
-    ws.merge_cells("D1:F1")  # D:F
+    ws.merge_cells("D1:F1")
 
     ws["H1"].value = "Ship To:"
     ws["H1"].font = bold
-    ws.merge_cells("H1:J1")  # H:J
+    ws.merge_cells("H1:J1")
 
     bill_text = "\n".join([x for x in [
         (bill_to.get("name") or "").strip(),
@@ -567,7 +554,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["E7"].value = attn
     ws["E7"].alignment = left_mid
 
-    # invoice info kanan (I:J)
     ws["I6"].value = "Invoice"
     ws["I6"].font = bold
     ws["I6"].alignment = right_mid
@@ -586,10 +572,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws["J8"].value = no_surat_jalan
     ws["J8"].alignment = left_mid
 
-    # ======================
-    # Ref Box (D..J)
-    # RefNo(D:E), Sales(F:G), ShipVia(H), ShipDate(I), Terms(J)
-    # ======================
     ws.merge_cells("D10:E10")
     ws["D10"].value = "Ref No."
     ws["D10"].font = bold
@@ -634,10 +616,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     apply_outer_and_vertical_only(ws, 10, 4, 13, 10, vertical_separators_cols=[6, 8, 9, 10])
 
-    # ======================
-    # Items table (D..J)
-    # Qty(D) Unit(E) Date(F) Desc(G:H merge) Price(I) Amount(J)
-    # ======================
     ws["D14"].value = "Qty"
     ws["E14"].value = ""
     ws["F14"].value = "Date"
@@ -689,9 +667,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     last_table_row = start_row + max_rows - 1
     apply_outer_and_vertical_only(ws, 14, 4, last_table_row, 10, vertical_separators_cols=[5, 6, 7, 9, 10])
 
-    # ======================
-    # Payment + Totals
-    # ======================
     freight = int(inv.get("freight") or 0)
     ppn_rate = float(inv.get("ppn_rate") or 0.11)
     deposit = int(inv.get("deposit") or 0)
@@ -702,7 +677,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
 
     base_row = last_table_row + 2
 
-    # Left: D:H
     ws.merge_cells(f"D{base_row}:H{base_row}")
     ws[f"D{base_row}"].value = "Please Transfer Full Amount to:"
     ws[f"D{base_row}"].font = bold_ul
@@ -719,7 +693,6 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ws[f"D{base_row+i}"].value = line
         ws[f"D{base_row+i}"].alignment = left_mid
 
-    # Totals: label di I TANPA border, angka di J ADA border tipis (seperti template)
     labels = [
         ("Total", subtotal),
         ("Freight", freight),
@@ -742,19 +715,16 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
         ws[f"I{rr}"].value = lab
         ws[f"I{rr}"].alignment = right
         ws[f"I{rr}"].font = bold
-        ws[f"I{rr}"].border = no_border  # ✅ label tanpa border
+        ws[f"I{rr}"].border = no_border
 
         ws[f"J{rr}"].value = val
         ws[f"J{rr}"].alignment = right
         ws[f"J{rr}"].font = bold if lab in ("Balance Due",) else Font(bold=False)
-        ws[f"J{rr}"].border = border_box_thin()  # ✅ angka ada border
+        ws[f"J{rr}"].border = border_box_thin()
         money(ws[f"J{rr}"])
 
     totals_bottom = totals_top + len(labels) - 1
 
-    # ======================
-    # Signature box + footer (outer only)
-    # ======================
     box_top = totals_bottom + 2
     box_bottom = box_top + 6
 
@@ -1036,10 +1006,10 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         conversations[sid] = state
 
         out_text = (
-            "Baik, saya bantu buatkan <b>INVOICE</b>.<br><br>"
-            f"✅ Invoice No: <b>{inv_no}</b><br>"
-            f"✅ Date: <b>{state['data']['invoice_date']}</b><br><br>"
-            "❓ <b>1. Bill To - Nama Perusahaan?</b>"
+            "Baik, saya akan membantu membuat <b>Invoice</b>.<br><br>"
+            f"Nomor invoice: <b>{inv_no}</b><br>"
+            f"Tanggal: <b>{state['data']['invoice_date']}</b><br><br>"
+            "Pertanyaan 1: <b>Nama perusahaan untuk Bill To?</b>"
         )
 
         history_id_created = None
@@ -1063,15 +1033,15 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
-        alamat = resolve_company_address(text)  # ✅ default "Di tempat"
+        alamat = resolve_company_address(text)
         state["data"]["bill_to"]["address"] = alamat
         state["step"] = "inv_shipto_same"
         conversations[sid] = state
 
         out_text = (
-            f"✅ Bill To: <b>{state['data']['bill_to']['name']}</b><br>"
-            f"✅ Alamat: <b>{alamat}</b><br><br>"
-            "❓ <b>2. Ship To sama dengan Bill To?</b> (ya/tidak)"
+            f"Bill To: <b>{state['data']['bill_to']['name']}</b><br>"
+            f"Alamat: <b>{alamat}</b><br><br>"
+            "Pertanyaan 2: <b>Apakah Ship To sama dengan Bill To?</b> (ya/tidak)"
         )
 
         if history_id_in:
@@ -1084,13 +1054,16 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             state["data"]["ship_to"] = dict(state["data"]["bill_to"])
             state["step"] = "inv_phone"
             conversations[sid] = state
-            out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
+            out_text = "Pertanyaan 3: <b>Nomor telepon?</b> (boleh kosong; sebut <b>strip</b> jika tidak ada)"
         elif ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower):
             state["step"] = "inv_shipto_name"
             conversations[sid] = state
-            out_text = "❓ <b>2A. Ship To - Nama Perusahaan?</b>"
+            out_text = "Pertanyaan 2A: <b>Nama perusahaan untuk Ship To?</b>"
         else:
-            out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>2. Ship To sama dengan Bill To?</b>"
+            out_text = (
+                "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+                "Pertanyaan 2: <b>Apakah Ship To sama dengan Bill To?</b>"
+            )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1098,11 +1071,11 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_shipto_name":
         state["data"]["ship_to"]["name"] = text.strip()
-        alamat = resolve_company_address(text)  # ✅ default "Di tempat"
+        alamat = resolve_company_address(text)
         state["data"]["ship_to"]["address"] = alamat
         state["step"] = "inv_phone"
         conversations[sid] = state
-        out_text = "❓ <b>3. Phone?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
+        out_text = "Pertanyaan 3: <b>Nomor telepon?</b> (boleh kosong; sebut <b>strip</b> jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1112,7 +1085,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["phone"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_fax"
         conversations[sid] = state
-        out_text = "❓ <b>4. Fax?</b> (boleh kosong, sebut <b>strip</b> jika tidak ada)"
+        out_text = "Pertanyaan 4: <b>Fax?</b> (boleh kosong; sebut <b>strip</b> jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1122,7 +1095,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["fax"] = "" if text.strip() in ("-", "") else text.strip()
         state["step"] = "inv_attn"
         conversations[sid] = state
-        out_text = "❓ <b>5. Attn?</b> (default: Accounting / Finance | sebut <b>strip</b> untuk default)"
+        out_text = "Pertanyaan 5: <b>Attn?</b> (default: Accounting / Finance; sebut <b>strip</b> untuk default)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1135,7 +1108,10 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["step"] = "inv_item_qty"
         state["data"]["current_item"] = {}
         conversations[sid] = state
-        out_text = "📦 <b>Item #1</b><br>❓ <b>6. Qty?</b> (contoh: 749 atau 2,5 atau 'dua koma lima')"
+        out_text = (
+            "Item 1<br>"
+            "Pertanyaan 6: <b>Qty?</b> (contoh: 749 atau 2,5 atau 'dua koma lima')"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1149,7 +1125,10 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
         state["step"] = "inv_item_desc"
         conversations[sid] = state
-        out_text = "❓ <b>6B. Jenis Limbah / Kode Limbah?</b><br><i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau sebut <b>NON B3</b>)</i>"
+        out_text = (
+            "Pertanyaan 6B: <b>Jenis limbah atau kode limbah?</b><br>"
+            "<i>Contoh: A102d atau aki baterai bekas. Atau sebut <b>NON B3</b>.</i>"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1160,7 +1139,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             state["data"]["current_item"]["description"] = ""
             state["step"] = "inv_item_desc_manual"
             conversations[sid] = state
-            out_text = "❓ <b>6C. Deskripsi (manual) apa?</b>"
+            out_text = "Pertanyaan 6C: <b>Deskripsi (manual) apa?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -1174,13 +1153,19 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             state["data"]["current_item"]["description"] = data_limbah["jenis"]
             state["step"] = "inv_item_price"
             conversations[sid] = state
-            out_text = f"✅ Deskripsi: <b>{data_limbah['jenis']}</b><br><br>❓ <b>6D. Price (Rp)?</b>"
+            out_text = (
+                f"Deskripsi: <b>{data_limbah['jenis']}</b><br><br>"
+                "Pertanyaan 6D: <b>Harga (Rp)?</b>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan.<br><br>Ucapkan kode/jenis lain atau <b>NON B3</b>."
+        out_text = (
+            f"Maaf, limbah <b>{text}</b> tidak ditemukan.<br><br>"
+            "Silakan sebutkan kode/jenis lain atau sebut <b>NON B3</b> untuk input manual."
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1190,7 +1175,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["current_item"]["description"] = text.strip()
         state["step"] = "inv_item_price"
         conversations[sid] = state
-        out_text = "❓ <b>6D. Price (Rp)?</b>"
+        out_text = "Pertanyaan 6D: <b>Harga (Rp)?</b>"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1203,7 +1188,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["current_item"] = {}
         state["step"] = "inv_add_more_item"
         conversations[sid] = state
-        out_text = "❓ <b>Tambah item lagi?</b> (ya/tidak)"
+        out_text = "Pertanyaan: <b>Tambah item lagi?</b> (ya/tidak)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1215,7 +1200,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             state["step"] = "inv_item_qty"
             state["data"]["current_item"] = {}
             conversations[sid] = state
-            out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>6. Qty?</b>"
+            out_text = f"Item {num+1}<br>Pertanyaan 6: <b>Qty?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -1224,13 +1209,13 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         if ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower) or ("skip" in lower) or ("lewat" in lower):
             state["step"] = "inv_freight"
             conversations[sid] = state
-            out_text = "❓ <b>7. Biaya Transportasi/Freight (Rp)?</b> (0 jika tidak ada)"
+            out_text = "Pertanyaan 7: <b>Biaya transportasi/Freight (Rp)?</b> (isi 0 jika tidak ada)"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = "⚠️ Mohon jawab <b>ya</b> atau <b>tidak</b>."
+        out_text = "Mohon jawab <b>ya</b> atau <b>tidak</b>."
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
         return {"text": out_text, "history_id": history_id_in}
@@ -1239,7 +1224,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         state["data"]["freight"] = parse_amount_id(text)
         state["step"] = "inv_deposit"
         conversations[sid] = state
-        out_text = "❓ <b>8. Deposit (Rp)?</b> (0 jika tidak ada)"
+        out_text = "Pertanyaan 8: <b>Deposit (Rp)?</b> (isi 0 jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -1296,12 +1281,11 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             )
 
         out_text = (
-            "🎉 <b>Invoice berhasil dibuat!</b><br><br>"
-            f"✅ Invoice No: <b>{state['data'].get('invoice_no')}</b><br>"
-            f"✅ Bill To: <b>{(state['data'].get('bill_to') or {}).get('name','')}</b><br>"
-            f"✅ Total Item: <b>{len(state['data'].get('items') or [])}</b><br><br>"
-            "📌 Preview: PDF<br>"
-            "📌 Download: Excel (.xlsx) / PDF"
+            "<b>Invoice berhasil dibuat.</b><br><br>"
+            f"Nomor invoice: <b>{state['data'].get('invoice_no')}</b><br>"
+            f"Bill To: <b>{(state['data'].get('bill_to') or {}).get('name','')}</b><br>"
+            f"Jumlah item: <b>{len(state['data'].get('items') or [])}</b><br><br>"
+            "Dokumen tersedia dalam format PDF (preview) dan Excel (.xlsx)."
         )
 
         db_append_message(history_id, "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=files)

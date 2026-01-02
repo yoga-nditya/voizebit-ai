@@ -111,9 +111,6 @@ def set_run_font(run, font_name="Times New Roman", size=10, bold=None):
 
 # =========================
 # FIX 1: replace yang tahan run ter-split
-# - Kalau placeholder terpecah antar-run, versi lama gagal replace.
-# - Versi ini: cek full paragraph.text, lalu kalau ada old,
-#   kita rebuild isi paragraf dengan mempertahankan format run pertama.
 # =========================
 def replace_in_runs_keep_format(paragraph, old: str, new: str):
     if not old or not paragraph.text:
@@ -121,7 +118,6 @@ def replace_in_runs_keep_format(paragraph, old: str, new: str):
     if old not in paragraph.text:
         return False
 
-    # Jika ada run yang mengandung old utuh, pakai cara lama (lebih aman)
     changed = False
     for run in paragraph.runs:
         if old in run.text:
@@ -130,15 +126,12 @@ def replace_in_runs_keep_format(paragraph, old: str, new: str):
     if changed:
         return True
 
-    # Kalau sampai sini: old ada di paragraph.text tapi tidak ada di satu run pun
-    # artinya teks old terpecah antar-run -> lakukan rebuild sederhana.
     full = paragraph.text
     replaced = full.replace(old, new)
     if replaced == full:
         return False
 
     if paragraph.runs:
-        # Pertahankan formatting dari run pertama
         paragraph.runs[0].text = replaced
         for r in paragraph.runs[1:]:
             r.text = ""
@@ -182,11 +175,6 @@ def style_cell_paragraph(cell, align="left", left_indent_pt=0, font="Times New R
 # NEW: helper untuk center PIHAK KETIGA (kolom kanan)
 # =========================
 def _center_paragraph_if_contains(paragraph, needles):
-    """
-    Set paragraf ke CENTER jika text mengandung salah satu 'needles'.
-    Ini tidak mengubah isi text (kecuali bersihin TAB awal yang bikin geser),
-    hanya alignment & indent.
-    """
     if not paragraph or not paragraph.text:
         return False
     txt = paragraph.text.strip()
@@ -195,34 +183,23 @@ def _center_paragraph_if_contains(paragraph, needles):
     for n in needles:
         if n and (n in txt):
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-            # FIX 2: pastikan tidak ada indent/tab stop bawaan template yang bikin geser
             paragraph.paragraph_format.left_indent = Pt(0)
             paragraph.paragraph_format.first_line_indent = Pt(0)
             paragraph.paragraph_format.right_indent = Pt(0)
-
-            # Clear tab stops jika ada (python-docx support)
             try:
                 paragraph.paragraph_format.tab_stops.clear_all()
             except Exception:
                 pass
-
-            # Hapus TAB di awal run (sering bikin tampak "ketabs ke kanan")
             try:
                 for r in paragraph.runs:
                     if r.text and r.text.startswith("\t"):
                         r.text = r.text.lstrip("\t")
             except Exception:
                 pass
-
             return True
     return False
 
 def _center_everywhere_for_needles(doc, needles):
-    """
-    Scan semua paragraf (body + table cells) dan center
-    hanya untuk paragraf yang mengandung needles.
-    """
     for p in doc.paragraphs:
         _center_paragraph_if_contains(p, needles)
 
@@ -382,16 +359,10 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     if alamat3:
         replace_everywhere_keep_format(doc, contoh_alamat_p3_candidates, alamat3)
 
-    # =========================
-    # NEW: Paksa CENTER untuk kolom kanan (PIHAK KETIGA)
-    # Hanya mempengaruhi paragraf yang berisi nama/jabatan pihak ketiga
-    # =========================
     pihak_ketiga_needles = [
-        # placeholder yang biasa ada di template
         "Yogi Aditya", "Yogi Permana", "Yogi",
         "General Manager", "GENERAL MANAGER",
         "Direktur", "DIREKTUR",
-        # nilai aktual dari input user
         ttd3, jab3
     ]
     _center_everywhere_for_needles(doc, pihak_ketiga_needles)
@@ -466,11 +437,10 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         conversations[sid] = state
 
         out_text = (
-            "Baik, saya bantu buatkan <b>MoU Tripartit</b>.<br><br>"
-            f"✅ No Depan: <b>{nomor_depan}</b><br>"
-            "✅ Nomor lengkap otomatis mengikuti format template.<br>"
-            "✅ Tanggal otomatis hari ini.<br><br>"
-            "❓ <b>1. Nama Perusahaan (PIHAK PERTAMA / Penghasil Limbah)?</b>"
+            "Baik, saya akan membantu menyusun <b>MoU Tripartit</b>.<br><br>"
+            f"Nomor awal: <b>{nomor_depan}</b><br>"
+            "Nomor lengkap mengikuti format template, dan tanggal menggunakan tanggal hari ini.<br><br>"
+            "Pertanyaan 1: <b>Nama perusahaan (Pihak Pertama / Penghasil Limbah)?</b>"
         )
 
         history_id_created = None
@@ -506,11 +476,11 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         conversations[sid] = state
 
         out_text = (
-            f"✅ PIHAK PERTAMA: <b>{state['data']['pihak_pertama']}</b><br>"
-            f"✅ Alamat: <b>{alamat}</b><br><br>"
-            "❓ <b>2. Pilih PIHAK KETIGA (Pengelola Limbah):</b><br>"
+            f"Pihak Pertama: <b>{state['data']['pihak_pertama']}</b><br>"
+            f"Alamat: <b>{alamat}</b><br><br>"
+            "Pertanyaan 2: <b>Pilih Pihak Ketiga (Pengelola Limbah)</b><br>"
             "1. HBSP<br>2. KJL<br>3. MBI<br>4. CGA<br><br>"
-            "<i>(Ketik nomor 1-4 atau ketik HBSP/KJL/MBI/CGA)</i>"
+            "<i>Ketik nomor 1-4 atau ketik HBSP/KJL/MBI/CGA</i>"
         )
 
         if history_id_in:
@@ -524,7 +494,11 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         mapping = {"1": "HBSP", "2": "KJL", "3": "MBI", "4": "CGA", "HBSP": "HBSP", "KJL": "KJL", "MBI": "MBI", "CGA": "CGA"}
         kode = mapping.get(pilihan)
         if not kode:
-            out_text = "⚠️ Pilihan tidak valid.<br><br>Pilih PIHAK KETIGA:<br>1. HBSP<br>2. KJL<br>3. MBI<br>4. CGA"
+            out_text = (
+                "Input tidak valid.<br><br>"
+                "Pilih Pihak Ketiga:<br>"
+                "1. HBSP<br>2. KJL<br>3. MBI<br>4. CGA"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             return {"text": out_text, "history_id": history_id_in}
@@ -547,11 +521,11 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         conversations[sid] = state
 
         out_text = (
-            f"✅ PIHAK KETIGA: <b>{state['data']['pihak_ketiga']}</b><br>"
-            f"✅ Nomor MoU: <b>{state['data']['nomor_surat']}</b><br><br>"
-            "📦 <b>Item #1</b><br>"
-            "❓ <b>3. Sebutkan Jenis Limbah atau Kode Limbah</b><br>"
-            "<i>(Contoh: 'A102d' atau 'aki baterai bekas' | atau ketik <b>NON B3</b>)</i>"
+            f"Pihak Ketiga: <b>{state['data']['pihak_ketiga']}</b><br>"
+            f"Nomor MoU: <b>{state['data']['nomor_surat']}</b><br><br>"
+            "Item 1<br>"
+            "Pertanyaan 3: <b>Sebutkan jenis limbah atau kode limbah</b><br>"
+            "<i>Contoh: A102d atau aki baterai bekas. Atau ketik NON B3 untuk input manual.</i>"
         )
 
         if history_id_in:
@@ -566,7 +540,10 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
             state['data']['current_item']['jenis_limbah'] = ""
             state['step'] = 'mou_manual_jenis_limbah'
             conversations[sid] = state
-            out_text = "✅ Kode: <b>NON B3</b><br><br>❓ <b>3A. Jenis Limbah (manual) apa?</b>"
+            out_text = (
+                "Kode limbah: <b>NON B3</b><br><br>"
+                "Pertanyaan 3A: <b>Jenis limbah (manual) apa?</b>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -584,13 +561,21 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
             state['step'] = 'mou_tambah_item'
             state['data']['current_item'] = {}
             conversations[sid] = state
-            out_text = f"✅ Item #{num} tersimpan!<br>• Jenis: <b>{data_limbah['jenis']}</b><br>• Kode: <b>{kode}</b><br><br>❓ <b>Tambah item lagi?</b> (ya/tidak)"
+            out_text = (
+                f"Item {num} tersimpan.<br>"
+                f"Jenis: <b>{data_limbah['jenis']}</b><br>"
+                f"Kode: <b>{kode}</b><br><br>"
+                "Pertanyaan: <b>Tambah item lagi?</b> (ya/tidak)"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = f"❌ Maaf, limbah '<b>{text}</b>' tidak ditemukan.<br><br>Ketik kode/jenis lain atau <b>NON B3</b>."
+        out_text = (
+            f"Maaf, limbah <b>{text}</b> tidak ditemukan.<br><br>"
+            "Silakan ketik kode/jenis lain atau ketik <b>NON B3</b> untuk input manual."
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -603,7 +588,12 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         state['step'] = 'mou_tambah_item'
         state['data']['current_item'] = {}
         conversations[sid] = state
-        out_text = f"✅ Item #{num} tersimpan!<br>• Jenis (manual): <b>{state['data']['items_limbah'][-1]['jenis_limbah']}</b><br>• Kode: <b>NON B3</b><br><br>❓ <b>Tambah item lagi?</b> (ya/tidak)"
+        out_text = (
+            f"Item {num} tersimpan.<br>"
+            f"Jenis (manual): <b>{state['data']['items_limbah'][-1]['jenis_limbah']}</b><br>"
+            "Kode: <b>NON B3</b><br><br>"
+            "Pertanyaan: <b>Tambah item lagi?</b> (ya/tidak)"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -611,7 +601,10 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
 
     if state.get('step') == 'mou_tambah_item':
         if re.match(r'^\d+', text.strip()):
-            out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
+            out_text = (
+                "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+                "Pertanyaan: <b>Tambah item lagi?</b>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             return {"text": out_text, "history_id": history_id_in}
@@ -621,7 +614,11 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
             state['step'] = 'mou_jenis_kode_limbah'
             state['data']['current_item'] = {}
             conversations[sid] = state
-            out_text = f"📦 <b>Item #{num+1}</b><br>❓ <b>3. Sebutkan Jenis Limbah atau Kode Limbah</b><br><i>(Contoh: 'A102d' | atau <b>NON B3</b>)</i>"
+            out_text = (
+                f"Item {num+1}<br>"
+                "Pertanyaan 3: <b>Sebutkan jenis limbah atau kode limbah</b><br>"
+                "<i>Contoh: A102d. Atau ketik NON B3 untuk input manual.</i>"
+            )
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -630,13 +627,16 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         if ('tidak' in lower) or ('skip' in lower) or ('lewat' in lower) or ('gak' in lower) or ('nggak' in lower):
             state['step'] = 'mou_ttd_pihak_pertama'
             conversations[sid] = state
-            out_text = "❓ <b>Nama penandatangan PIHAK PERTAMA?</b>"
+            out_text = "Pertanyaan: <b>Nama penandatangan Pihak Pertama?</b>"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
                 db_update_state(int(history_id_in), state)
             return {"text": out_text, "history_id": history_id_in}
 
-        out_text = "⚠️ Mohon jawab dengan <b>'ya'</b> atau <b>'tidak'</b><br><br>❓ <b>Tambah item lagi?</b>"
+        out_text = (
+            "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+            "Pertanyaan: <b>Tambah item lagi?</b>"
+        )
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
         return {"text": out_text, "history_id": history_id_in}
@@ -645,7 +645,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         state['data']['ttd_pihak_pertama'] = text.strip()
         state['step'] = 'mou_jabatan_pihak_pertama'
         conversations[sid] = state
-        out_text = "❓ <b>Jabatan penandatangan PIHAK PERTAMA?</b>"
+        out_text = "Pertanyaan: <b>Jabatan penandatangan Pihak Pertama?</b>"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -655,7 +655,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         state['data']['jabatan_pihak_pertama'] = text.strip()
         state['step'] = 'mou_ttd_pihak_ketiga'
         conversations[sid] = state
-        out_text = "❓ <b>Nama penandatangan PIHAK KETIGA?</b>"
+        out_text = "Pertanyaan: <b>Nama penandatangan Pihak Ketiga?</b>"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -665,7 +665,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         state['data']['ttd_pihak_ketiga'] = text.strip()
         state['step'] = 'mou_jabatan_pihak_ketiga'
         conversations[sid] = state
-        out_text = "❓ <b>Jabatan penandatangan PIHAK KETIGA?</b>"
+        out_text = "Pertanyaan: <b>Jabatan penandatangan Pihak Ketiga?</b>"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
             db_update_state(int(history_id_in), state)
@@ -725,12 +725,12 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
             )
 
         out_text = (
-            "🎉 <b>MoU berhasil dibuat!</b><br><br>"
-            f"✅ Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
-            f"✅ PIHAK PERTAMA: <b>{state['data'].get('pihak_pertama')}</b><br>"
-            f"✅ PIHAK KEDUA: <b>{state['data'].get('pihak_kedua')}</b><br>"
-            f"✅ PIHAK KETIGA: <b>{state['data'].get('pihak_ketiga')}</b><br>"
-            f"✅ Total Limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
+            "<b>MoU berhasil dibuat.</b><br><br>"
+            f"Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
+            f"Pihak Pertama: <b>{state['data'].get('pihak_pertama')}</b><br>"
+            f"Pihak Kedua: <b>{state['data'].get('pihak_kedua')}</b><br>"
+            f"Pihak Ketiga: <b>{state['data'].get('pihak_ketiga')}</b><br>"
+            f"Jumlah limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
         )
 
         db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
