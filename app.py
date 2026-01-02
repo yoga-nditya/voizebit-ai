@@ -4,8 +4,9 @@ import json
 import re
 import platform
 from datetime import datetime
+from pathlib import Path
 
-from flask import Flask, request, jsonify, render_template, send_from_directory, session
+from flask import Flask, request, jsonify, render_template, send_from_directory, session, send_file
 
 from config_new import *
 from limbah_database import LIMBAH_B3_DB
@@ -145,13 +146,52 @@ def api_documents():
 # Helper: reset / cancel flow
 # =========================
 def is_cancel_cmd(lower: str) -> bool:
-    # kamu bisa tambah kata lain kalau mau
     keys = ["batal", "cancel", "reset", "ulang", "start over", "keluar"]
     return any(k in lower for k in keys)
 
 
 def reset_state(sid: str):
     conversations[sid] = {"step": "idle", "data": {}}
+
+
+# =========================
+# ✅ Helper: PDF thumbnail generator (page 1 -> PNG)
+# =========================
+THUMB_DIR = Path("static") / "thumbs"
+THUMB_DIR.mkdir(parents=True, exist_ok=True)
+
+def _safe_thumb_name(filename: str) -> str:
+    # bikin nama thumbnail stabil: "file.pdf" -> "file.pdf.png"
+    # plus replace karakter aneh
+    safe = re.sub(r'[^a-zA-Z0-9._-]+', '_', filename)
+    return f"{safe}.png"
+
+def generate_pdf_thumbnail(pdf_path: Path, out_path: Path) -> bool:
+    """
+    Return True kalau thumbnail berhasil dibuat.
+    Butuh PyMuPDF (fitz).
+    """
+    try:
+        import fitz  # PyMuPDF
+    except Exception:
+        return False
+
+    try:
+        doc = fitz.open(str(pdf_path))
+        if doc.page_count == 0:
+            return False
+
+        page = doc.load_page(0)
+        # scale biar jelas (sesuaikan kalau mau)
+        zoom = 2.0
+        mat = fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        pix.save(str(out_path))
+        doc.close()
+        return True
+    except Exception:
+        return False
 
 
 @app.route("/api/chat", methods=["POST"])
@@ -170,10 +210,9 @@ def chat():
             session["sid"] = sid
 
         state = conversations.get(sid, {"step": "idle", "data": {}})
-        conversations[sid] = state  # pastikan tersimpan
+        conversations[sid] = state
         lower = text.lower().strip()
 
-        # ===== cancel/reset command =====
         if is_cancel_cmd(lower):
             reset_state(sid)
             out = "✅ Flow dibatalkan. Kamu mau buat <b>invoice</b>, <b>mou</b>, atau <b>quotation</b>?"
@@ -186,19 +225,12 @@ def chat():
                     pass
             return jsonify({"text": out, "history_id": history_id_in})
 
-        # simpan pesan user ke history (kalau ada)
         if history_id_in:
             try:
                 db_append_message(int(history_id_in), "user", text, files=[])
                 db_update_state(int(history_id_in), state)
             except:
                 pass
-
-        # =========================================================
-        # ROUTING FLOW:
-        # - Kalau state.step != idle: coba lanjutkan semua flow sampai ada yang handle
-        # - Kalau idle: tetap coba trigger flow (invoice/mou/quotation)
-        # =========================================================
 
         # 1) Invoice
         resp = handle_invoice_flow(data, text, lower, sid, state, conversations, history_id_in)
@@ -215,7 +247,6 @@ def chat():
         if resp is not None:
             return jsonify(resp)
 
-        # fallback AI chat biasa
         ai_out = call_ai(text)
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", ai_out, files=[])
@@ -230,7 +261,40 @@ def chat():
 
 @app.route("/download/<path:filename>")
 def download(filename):
+    """
+    ✅ Mode normal: download file (as_attachment=True)
+    ✅ Mode thumbnail: /download/<filename>?thumbnail=1
+       - untuk PDF: return PNG preview (inline)
+       - untuk non-PDF: 404 (biar app fallback ke icon)
+    """
+    file_path = Path(FILES_DIR) / filename
+
+    if not file_path.exists():
+        return jsonify({"error": "file tidak ditemukan"}), 404
+
+    # ✅ thumbnail mode
+    thumb = (request.args.get("thumbnail") or "").strip()
+    if thumb in ("1", "true", "yes"):
+        # hanya PDF yang kita render
+        if str(file_path).lower().endswith(".pdf"):
+            thumb_path = THUMB_DIR / _safe_thumb_name(filename)
+
+            # cache thumbnail
+            if not thumb_path.exists() or thumb_path.stat().st_mtime < file_path.stat().st_mtime:
+                ok = generate_pdf_thumbnail(file_path, thumb_path)
+                if not ok:
+                    # kalau PyMuPDF tidak ada / gagal render
+                    return jsonify({"error": "thumbnail generator not available"}), 404
+
+            # return inline image
+            return send_file(str(thumb_path), mimetype="image/png", as_attachment=False)
+
+        # non-pdf: belum support thumbnail
+        return jsonify({"error": "thumbnail hanya untuk pdf"}), 404
+
+    # ✅ normal download (tetap seperti kamu)
     return send_from_directory(str(FILES_DIR), filename, as_attachment=True)
+
 
 if __name__ == "__main__":
     port = FLASK_PORT
