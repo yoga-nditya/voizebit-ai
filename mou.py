@@ -112,7 +112,6 @@ def set_run_font(run, font_name="Times New Roman", size=10, bold=None):
 
 # =========================
 # ✅ NEW: baca angka singkat "1.5jt" => 1,5 juta (bukan 15)
-# (tidak mengubah flow lain; helper siap dipakai di modul lain kalau perlu)
 # =========================
 def parse_id_short_amount(text: str):
     """
@@ -127,10 +126,8 @@ def parse_id_short_amount(text: str):
     t = text.strip().lower()
     t = re.sub(r'\s+', '', t)
 
-    # tangkap angka depan + suffix
     m = re.match(r'^(\d+(?:[.,]\d+)?)\s*(jt|juta)$', t)
     if not m:
-        # bentuk lain: 1.5jt (tanpa spasi) sudah tertangkap di atas, tapi jaga-jaga:
         m = re.match(r'^(\d+(?:[.,]\d+)?)(jt|juta)$', t)
     if not m:
         return None
@@ -138,7 +135,6 @@ def parse_id_short_amount(text: str):
     num_s = m.group(1)
     suffix = m.group(2)
 
-    # decimal: boleh '.' atau ','
     num_s = num_s.replace(',', '.')
     try:
         val = float(num_s)
@@ -153,7 +149,7 @@ def parse_id_short_amount(text: str):
 
 
 # =========================
-# Address FIX: kalau hasil search berisi kalimat panjang/penjelasan -> "Di tempat"
+# Address FIX
 # =========================
 def _sanitize_company_address(addr: str) -> str:
     a = (addr or "").strip()
@@ -222,7 +218,7 @@ def resolve_company_address(company_name: str) -> str:
 
 
 # =========================
-# FIX 1: replace yang tahan run ter-split
+# FIX: replace yang tahan run ter-split
 # =========================
 def replace_in_runs_keep_format(paragraph, old: str, new: str):
     if not old or not paragraph.text:
@@ -283,100 +279,6 @@ def style_cell_paragraph(cell, align="left", left_indent_pt=0, font="Times New R
     for r in p.runs:
         set_run_font(r, font, size)
 
-# =========================
-# helper untuk center PIHAK KETIGA (kolom kanan)
-# =========================
-def _center_paragraph_if_contains(paragraph, needles):
-    if not paragraph or not paragraph.text:
-        return False
-    txt = paragraph.text.strip()
-    if not txt:
-        return False
-    for n in needles:
-        if n and (n in txt):
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            paragraph.paragraph_format.left_indent = Pt(0)
-            paragraph.paragraph_format.first_line_indent = Pt(0)
-            paragraph.paragraph_format.right_indent = Pt(0)
-            try:
-                paragraph.paragraph_format.tab_stops.clear_all()
-            except Exception:
-                pass
-            try:
-                for r in paragraph.runs:
-                    if r.text and r.text.startswith("\t"):
-                        r.text = r.text.lstrip("\t")
-            except Exception:
-                pass
-            return True
-    return False
-
-def _center_everywhere_for_needles(doc, needles):
-    for p in doc.paragraphs:
-        _center_paragraph_if_contains(p, needles)
-
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    _center_paragraph_if_contains(p, needles)
-
-
-# =========================
-# ✅ FIX: set jabatan PIHAK KETIGA robust + benar-benar center (bersih tab)
-# =========================
-def _iter_all_paragraphs(doc):
-    for p in doc.paragraphs:
-        yield p
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    yield p
-
-def replace_title_after_name(doc, signer_name: str, new_title: str) -> bool:
-    """
-    Cari paragraf yang memuat signer_name (ttd pihak ketiga),
-    lalu set paragraf non-kosong berikutnya menjadi new_title
-    + paksa center + bersihkan tab/indent/tabstops.
-    """
-    if not signer_name or not new_title:
-        return False
-
-    signer_low = signer_name.strip().lower()
-    paras = list(_iter_all_paragraphs(doc))
-
-    def _force_center_clean(paragraph):
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        paragraph.paragraph_format.left_indent = Pt(0)
-        paragraph.paragraph_format.first_line_indent = Pt(0)
-        paragraph.paragraph_format.right_indent = Pt(0)
-        try:
-            paragraph.paragraph_format.tab_stops.clear_all()
-        except Exception:
-            pass
-        try:
-            for r in paragraph.runs:
-                if r.text:
-                    r.text = r.text.replace("\t", "")
-        except Exception:
-            pass
-
-    for i, p in enumerate(paras):
-        if signer_low in (p.text or "").strip().lower():
-            for j in range(i + 1, min(i + 10, len(paras))):
-                nxt = paras[j]
-                if (nxt.text or "").strip():
-                    if nxt.runs:
-                        nxt.runs[0].text = new_title
-                        for r in nxt.runs[1:]:
-                            r.text = ""
-                    else:
-                        nxt.add_run(new_title)
-                    _force_center_clean(nxt)
-                    return True
-    return False
-
 
 # =========================
 # MoU Counter (as-is)
@@ -413,7 +315,7 @@ def get_next_mou_no_depan() -> str:
 
 
 # =========================
-# Create MoU DOCX (as-is)
+# Create MoU DOCX (PIHAK KETIGA: hanya perusahaan + alamat; nama/jabatan ttd TIDAK disentuh)
 # =========================
 
 def create_mou_docx(mou_data: dict, fname_base: str) -> str:
@@ -432,11 +334,6 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
 
     ttd1 = (mou_data.get("ttd_pihak_pertama") or "").strip()
     jab1 = (mou_data.get("jabatan_pihak_pertama") or "").strip()
-
-    # ✅ Penandatangan pihak ketiga mengikuti template (fixed),
-    # tapi tetap kita ambil dari mou_data karena kita set dari mapping saat pilih pihak ketiga.
-    ttd3 = (mou_data.get("ttd_pihak_ketiga") or "").strip()
-    jab3 = (mou_data.get("jabatan_pihak_ketiga") or "").strip()
 
     nomor_full = (mou_data.get("nomor_surat") or "").strip()
     tanggal_text = format_tanggal_indonesia(datetime.now())
@@ -517,30 +414,12 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
     if alamat1:
         replace_everywhere_keep_format(doc, contoh_alamat_p1_candidates, alamat1)
 
-    # ✅ Penandatangan pihak ketiga fixed dari template/mapping
-    if ttd3:
-        replace_everywhere_keep_format(doc, ["Yogi Aditya", "Yogi Permana", "Yogi"], ttd3)
-
-    # ✅ Jabatan pihak ketiga: robust + center bersih
-    if jab3:
-        ok = replace_title_after_name(doc, ttd3, jab3)
-        if not ok:
-            replace_everywhere_keep_format(doc, ["General Manager", "GENERAL MANAGER"], jab3)
-
     contoh_alamat_p3_candidates = [
         "Jl. Karawang – Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi – Jawa Barat",
         "Jl. Karawang - Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi - Jawa Barat",
     ]
     if alamat3:
         replace_everywhere_keep_format(doc, contoh_alamat_p3_candidates, alamat3)
-
-    pihak_ketiga_needles = [
-        "Yogi Aditya", "Yogi Permana", "Yogi",
-        "General Manager", "GENERAL MANAGER",
-        "Direktur", "DIREKTUR",
-        ttd3, jab3
-    ]
-    _center_everywhere_for_needles(doc, pihak_ketiga_needles)
 
     items = mou_data.get("items_limbah") or []
     target_table = None
@@ -606,9 +485,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
             'alamat_pihak_ketiga': "",
             'ttd_pihak_pertama': "",
             'jabatan_pihak_pertama': "",
-            # ✅ pihak ketiga signer FIXED (akan diisi otomatis saat pilih pihak ketiga)
-            'ttd_pihak_ketiga': "",
-            'jabatan_pihak_ketiga': "",
+            # ✅ penanganan nama & jabatan pihak ketiga DIHAPUS
         }
         conversations[sid] = state
 
@@ -681,20 +558,9 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
             "CGA": "",
         }
 
-        # ✅ signer pihak ketiga FIXED ikut template (silakan sesuaikan nama jika template berbeda)
-        pihak3_ttd_map = {
-            "HBSP": "Yogi Aditya",
-            "KJL": "Yogi Aditya",
-            "MBI": "Yogi Aditya",
-            "CGA": "Yogi Aditya",
-        }
-
         state['data']['pihak_ketiga'] = pihak3_nama_map.get(kode, kode)
         state['data']['pihak_ketiga_kode'] = kode
         state['data']['alamat_pihak_ketiga'] = pihak3_alamat_map.get(kode, "")
-
-        # ✅ set penandatangan otomatis (bukan input user)
-        state['data']['ttd_pihak_ketiga'] = pihak3_ttd_map.get(kode, "Yogi Aditya")
 
         state['data']['nomor_surat'] = build_mou_nomor_surat(state['data'])
         state['step'] = 'mou_jenis_kode_limbah'
@@ -835,22 +701,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
     if state.get('step') == 'mou_jabatan_pihak_pertama':
         state['data']['jabatan_pihak_pertama'] = text.strip()
 
-        # ✅ Lewati pertanyaan "Nama penandatangan Pihak Ketiga"
-        # karena penandatangan sudah FIXED ikut template/mapping.
-        state['step'] = 'mou_jabatan_pihak_ketiga'
-        conversations[sid] = state
-        out_text = (
-            f"Penandatangan Pihak Ketiga mengikuti template: <b>{state['data'].get('ttd_pihak_ketiga','')}</b><br><br>"
-            "Pertanyaan: <b>Jabatan penandatangan Pihak Ketiga?</b>"
-        )
-        if history_id_in:
-            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
-            db_update_state(int(history_id_in), state)
-        return {"text": out_text, "history_id": history_id_in}
-
-    if state.get('step') == 'mou_jabatan_pihak_ketiga':
-        state['data']['jabatan_pihak_ketiga'] = text.strip()
-
+        # ✅ Penanganan pihak ketiga (nama/jabatan) dihapus -> langsung generate dokumen
         nama_pt_raw = state['data'].get('pihak_pertama', '').strip()
         safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
         safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()

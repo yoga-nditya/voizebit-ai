@@ -1375,7 +1375,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             {"type": "pdf", "filename": pdf_preview, "url": f"/download/{pdf_preview}"},
         ]
 
-        conversations[sid] = {"step": "idle", "data": {}}
+        conversations[sid] = {"step": "idle", "data": {}} 
 
         history_title = f"Invoice {nama_pt_raw}" if nama_pt_raw else "Invoice"
         history_task_type = "invoice"
