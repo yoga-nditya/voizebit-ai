@@ -296,7 +296,8 @@ def _iter_all_paragraphs(doc):
 def replace_title_after_name(doc, signer_name: str, new_title: str) -> bool:
     """
     Cari paragraf yang memuat signer_name (ttd pihak ketiga),
-    lalu set paragraf non-kosong berikutnya menjadi new_title.
+    lalu set paragraf non-kosong berikutnya menjadi new_title
+    + paksa center dan bersihkan tab/indent/tabstops.
     """
     if not signer_name or not new_title:
         return False
@@ -304,9 +305,30 @@ def replace_title_after_name(doc, signer_name: str, new_title: str) -> bool:
     signer_low = signer_name.strip().lower()
     paras = list(_iter_all_paragraphs(doc))
 
+    def _force_center_clean(paragraph):
+        # Paksa center & reset indent
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.left_indent = Pt(0)
+        paragraph.paragraph_format.first_line_indent = Pt(0)
+        paragraph.paragraph_format.right_indent = Pt(0)
+
+        # Bersihkan tabstops (kalau ada)
+        try:
+            paragraph.paragraph_format.tab_stops.clear_all()
+        except Exception:
+            pass
+
+        # Hapus karakter tab di run (terutama yang nyangkut di depan)
+        try:
+            for r in paragraph.runs:
+                if r.text:
+                    r.text = r.text.replace("\t", "")
+        except Exception:
+            pass
+
     for i, p in enumerate(paras):
         if signer_low in (p.text or "").strip().lower():
-            for j in range(i + 1, min(i + 6, len(paras))):
+            for j in range(i + 1, min(i + 10, len(paras))): 
                 nxt = paras[j]
                 if (nxt.text or "").strip():
                     if nxt.runs:
@@ -315,9 +337,11 @@ def replace_title_after_name(doc, signer_name: str, new_title: str) -> bool:
                             r.text = ""
                     else:
                         nxt.add_run(new_title)
-                    return True
-    return False
 
+                    _force_center_clean(nxt)
+                    return True
+
+    return False
 
 # =========================
 # MoU Counter (as-is)
