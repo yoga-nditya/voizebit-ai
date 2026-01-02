@@ -39,6 +39,56 @@ def normalize_id_number_text(text: str) -> str:
 
 
 # =========================
+# ✅ NEW: Validasi input nominal (harga/freight/deposit)
+# =========================
+_ID_NUMBER_HINT_WORDS = set([
+    "nol", "kosong",
+    "satu", "se", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan",
+    "sepuluh", "sebelas", "belas", "puluh", "ratus",
+    "seratus", "seribu",
+    "ribu", "juta", "miliar", "triliun",
+    "koma",
+    "rupiah", "rp", "idr",
+    "jt",
+])
+
+def _is_zero_like_input(text: str) -> bool:
+    if not text:
+        return False
+    t = text.strip().lower()
+    t = re.sub(r"\s+", " ", t)
+    if t in ("0", "nol", "kosong"):
+        return True
+    if re.fullmatch(r"0+(?:[.,]0+)?", t):
+        return True
+    if re.fullmatch(r"(rp|idr)\s*0+(?:[.,]0+)?", t):
+        return True
+    if re.fullmatch(r"0+(?:[.,]0+)?\s*(rp|idr|rupiah)", t):
+        return True
+    if "nol" in t or "kosong" in t:
+        # contoh: "nol rupiah"
+        return True
+    return False
+
+def _is_amount_like_input(text: str) -> bool:
+    """
+    True jika input terlihat seperti nominal:
+    - ada digit (0-9), atau
+    - mengandung kata angka Indonesia (nol, satu, ... juta, ribu, koma, rp, rupiah, jt, dst)
+    """
+    if not text:
+        return False
+    t = text.strip().lower()
+    if re.search(r"\d", t):
+        return True
+    tokens = re.findall(r"[a-zA-Z]+", t)
+    for w in tokens:
+        if w in _ID_NUMBER_HINT_WORDS:
+            return True
+    return False
+
+
+# =========================
 # Improved Indonesian words-to-number (supports koma, ribu, juta, dll)
 # =========================
 _ID_SMALL = {
@@ -181,11 +231,29 @@ def words_to_number_id(text: str):
     return float(_parse_id_integer_words(tokens))
 
 
-def parse_amount_id(text: str) -> int:
-    if not text:
-        return 0
+# =========================
+# ✅ FIX: parse_amount_id jadi STRICT (None kalau tidak valid)
+# =========================
+def parse_amount_id(text: str):
+    """
+    Return:
+      - int jika valid
+      - None jika input tidak valid (misal: 'p')
+    """
+    if text is None:
+        return None
 
-    raw = text.strip().lower()
+    raw = str(text).strip().lower()
+    if raw == "":
+        return None
+
+    # jika input jelas bukan nominal => invalid
+    if not _is_amount_like_input(raw):
+        return None
+
+    # nol-like => valid 0
+    if _is_zero_like_input(raw):
+        return 0
 
     wv = words_to_number_id(raw)
     if wv is not None:
@@ -194,16 +262,24 @@ def parse_amount_id(text: str) -> int:
         except:
             pass
 
-    tnorm = normalize_id_number_text(text)
+    tnorm = normalize_id_number_text(str(text))
     val = convert_voice_to_number(tnorm)
+
     if val is None:
-        val = 0
+        # kalau tidak bisa convert, tapi input terlihat nominal -> coba ambil digit
+        digits = re.sub(r"\D+", "", tnorm)
+        if digits:
+            try:
+                return int(digits)
+            except:
+                return None
+        return None
 
     try:
         return int(round(float(val)))
     except:
         digits = re.sub(r"\D+", "", str(val))
-        return int(digits) if digits else 0
+        return int(digits) if digits else None
 
 
 def parse_qty_id(text: str) -> float:
@@ -249,7 +325,6 @@ def _sanitize_company_address(addr: str) -> str:
 
     low = a.lower()
 
-    # ✅ FIX: deteksi jawaban AI panjang (seperti screenshot kamu) sebagai "not found"
     bad_patterns = [
         r"tidak\s*dapat\s+menentukan",
         r"tidak\s*bisa\s+menentukan",
@@ -283,12 +358,9 @@ def _sanitize_company_address(addr: str) -> str:
         if re.search(p, low):
             return "Di tempat"
 
-    # ✅ FIX: heuristik aman — kalau teks panjang kayak paragraf & tidak ada ciri alamat, jadikan "Di tempat"
-    # (alamat biasanya ada: jl/jalan, rt/rw, kec/kab, kota, no., dsb)
     if len(a) > 120 and not re.search(r"\b(jl|jalan|rt|rw|kec|kel|kab|kota|no\.?|blok|desa)\b", low):
         return "Di tempat"
 
-    # (opsional) kalau terlalu panjang banget tetap dianggap bukan alamat
     if len(a) > 250:
         return "Di tempat"
 
@@ -393,12 +465,6 @@ def _side(style="thin"):
 
 
 def apply_outer_and_vertical_only(ws, r1, c1, r2, c2, vertical_separators_cols, outer_style="medium", inner_style="thin"):
-    """
-    Border:
-    - outer = medium
-    - vertical separators = thin
-    - no horizontal inner borders
-    """
     outer = _side(outer_style)
     inner = _side(inner_style)
     seps = set(vertical_separators_cols or [])
@@ -1202,9 +1268,22 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             db_update_state(int(history_id_in), state)
         return {"text": out_text, "history_id": history_id_in}
 
+    # =========================
+    # ✅ VALIDASI HARGA: kalau typo 'p' -> peringatan
+    # =========================
     if state.get("step") == "inv_item_price":
         price = parse_amount_id(text)
-        state["data"]["current_item"]["price"] = price
+        if price is None:
+            out_text = (
+                "Input <b>harga</b> tidak valid.<br>"
+                "Mohon masukkan angka. Contoh: <b>1500000</b> atau <b>nol</b> / <b>0</b>.<br><br>"
+                "Pertanyaan 6D: <b>Harga (Rp)?</b>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
+            return {"text": out_text, "history_id": history_id_in}
+
+        state["data"]["current_item"]["price"] = int(price)
         state["data"]["items"].append(state["data"]["current_item"])
         state["data"]["current_item"] = {}
         state["step"] = "inv_add_more_item"
@@ -1230,7 +1309,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         if ("tidak" in lower) or ("gak" in lower) or ("nggak" in lower) or ("skip" in lower) or ("lewat" in lower):
             state["step"] = "inv_freight"
             conversations[sid] = state
-            out_text = "Pertanyaan 7: <b>Biaya transportasi/Freight (Rp)?</b> (isi 0 jika tidak ada)"
+            out_text = "Pertanyaan 7: <b>Biaya transportasi/Freight (Rp)?</b> (isi 0 atau nol jika tidak ada)"
             if history_id_in:
                 db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
                 db_update_state(int(history_id_in), state)
@@ -1241,18 +1320,46 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
         return {"text": out_text, "history_id": history_id_in}
 
+    # =========================
+    # ✅ VALIDASI FREIGHT
+    # =========================
     if state.get("step") == "inv_freight":
-        state["data"]["freight"] = parse_amount_id(text)
+        freight_val = parse_amount_id(text)
+        if freight_val is None:
+            out_text = (
+                "Input <b>freight</b> tidak valid.<br>"
+                "Mohon masukkan angka. Contoh: <b>0</b> / <b>nol</b> jika tidak ada.<br><br>"
+                "Pertanyaan 7: <b>Biaya transportasi/Freight (Rp)?</b>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
+            return {"text": out_text, "history_id": history_id_in}
+
+        state["data"]["freight"] = int(freight_val)
         state["step"] = "inv_deposit"
         conversations[sid] = state
-        out_text = "Pertanyaan 8: <b>Deposit (Rp)?</b> (isi 0 jika tidak ada)"
+        out_text = "Pertanyaan 8: <b>Deposit (Rp)?</b> (isi 0 atau nol jika tidak ada)"
         if history_id_in:
             db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
             db_update_state(int(history_id_in), state)
         return {"text": out_text, "history_id": history_id_in}
 
+    # =========================
+    # ✅ VALIDASI DEPOSIT
+    # =========================
     if state.get("step") == "inv_deposit":
-        state["data"]["deposit"] = parse_amount_id(text)
+        dep_val = parse_amount_id(text)
+        if dep_val is None:
+            out_text = (
+                "Input <b>deposit</b> tidak valid.<br>"
+                "Mohon masukkan angka. Contoh: <b>0</b> / <b>nol</b> jika tidak ada.<br><br>"
+                "Pertanyaan 8: <b>Deposit (Rp)?</b>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r"<br\s*/?>", "\n", out_text), files=[])
+            return {"text": out_text, "history_id": history_id_in}
+
+        state["data"]["deposit"] = int(dep_val)
 
         nama_pt_raw = (state["data"].get("bill_to") or {}).get("name", "").strip()
         safe_pt = re.sub(r"[^A-Za-z0-9 \-]+", "", nama_pt_raw).strip()
