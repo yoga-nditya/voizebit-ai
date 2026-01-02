@@ -109,6 +109,77 @@ def set_run_font(run, font_name="Times New Roman", size=10, bold=None):
     if bold is not None:
         run.bold = bold
 
+
+# =========================
+# Address FIX: kalau hasil search berisi kalimat panjang/penjelasan -> "Di tempat"
+# =========================
+def _sanitize_company_address(addr: str) -> str:
+    a = (addr or "").strip()
+    if not a:
+        return "Di tempat"
+
+    low = a.lower()
+
+    bad_patterns = [
+        r"tidak\s*dapat\s+menentukan",
+        r"tidak\s*bisa\s+menentukan",
+        r"tidak\s*dapat\s+menemukan",
+        r"tidak\s*bisa\s+menemukan",
+        r"tidak\s*ditemukan",
+        r"tidak\s*ketemu",
+        r"tidak\s+ada\s+informasi",
+        r"tidak\s+memiliki\s+informasi",
+        r"saya\s+tidak\s+memiliki",
+        r"informasi\s+yang\s+cukup",
+        r"tidak\s+cukup\s+informasi",
+        r"untuk\s+menentukan",
+        r"nama\s+tersebut\s+terlalu\s+umum",
+        r"terlalu\s+umum",
+        r"tidak\s+spesifik",
+        r"placeholder",
+        r"nama\s+contoh",
+        r"banyak\s+perusahaan.*nama\s+serupa",
+        r"mungkin\s+menggunakan\s+nama\s+serupa",
+        r"maaf",
+        r"gagal",
+        r"cannot\s+find",
+        r"not\s+found",
+        r"no\s+information",
+        r"no\s+result",
+        r"unknown",
+    ]
+
+    for p in bad_patterns:
+        if re.search(p, low):
+            return "Di tempat"
+
+    # Jika paragraf panjang dan tidak terlihat seperti alamat, fallback
+    if len(a) > 120 and not re.search(r"\b(jl|jalan|rt|rw|kec|kel|kab|kota|no\.?|blok|desa)\b", low):
+        return "Di tempat"
+
+    if len(a) > 250:
+        return "Di tempat"
+
+    return a
+
+
+def resolve_company_address(company_name: str) -> str:
+    addr = ""
+    try:
+        addr = (search_company_address(company_name) or "").strip()
+    except:
+        addr = ""
+    addr = _sanitize_company_address(addr)
+    if addr != "Di tempat":
+        return addr
+
+    try:
+        addr2 = (search_company_address_ai(company_name) or "").strip()
+    except:
+        addr2 = ""
+    return _sanitize_company_address(addr2)
+
+
 # =========================
 # FIX 1: replace yang tahan run ter-split
 # =========================
@@ -465,13 +536,10 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
     if state.get('step') == 'mou_pihak_pertama':
         state['data']['pihak_pertama'] = text.strip()
 
-        alamat = search_company_address(text).strip()
-        if not alamat:
-            alamat = search_company_address_ai(text).strip()
-        if not alamat:
-            alamat = "Di tempat"
-
+        # ✅ FIX: pakai resolver yang otomatis "Di tempat" kalau hasil panjang/penjelasan
+        alamat = resolve_company_address(text)
         state['data']['alamat_pihak_pertama'] = alamat
+
         state['step'] = 'mou_pilih_pihak_ketiga'
         conversations[sid] = state
 

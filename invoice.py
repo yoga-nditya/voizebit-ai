@@ -248,27 +248,48 @@ def _sanitize_company_address(addr: str) -> str:
         return "Di tempat"
 
     low = a.lower()
-    bad_markers = [
-        "tidak dapat menemukan",
-        "tidak ditemukan",
-        "tidak ada informasi",
-        "tidak memiliki informasi",
-        "saya tidak memiliki",
-        "informasi yang cukup",
-        "untuk menentukan",
-        "karena nama",
-        "terlalu",
-        "mohon",
-        "maaf",
-        "gagal",
-        "cannot find",
-        "not found",
-        "no information",
+
+    # ✅ FIX: deteksi jawaban AI panjang (seperti screenshot kamu) sebagai "not found"
+    bad_patterns = [
+        r"tidak\s*dapat\s+menentukan",
+        r"tidak\s*bisa\s+menentukan",
+        r"tidak\s*dapat\s+menemukan",
+        r"tidak\s*bisa\s+menemukan",
+        r"tidak\s*ditemukan",
+        r"tidak\s*ketemu",
+        r"tidak\s+ada\s+informasi",
+        r"tidak\s+memiliki\s+informasi",
+        r"saya\s+tidak\s+memiliki",
+        r"informasi\s+yang\s+cukup",
+        r"tidak\s+cukup\s+informasi",
+        r"untuk\s+menentukan",
+        r"nama\s+tersebut\s+terlalu\s+umum",
+        r"terlalu\s+umum",
+        r"tidak\s+spesifik",
+        r"placeholder",
+        r"nama\s+contoh",
+        r"banyak\s+perusahaan.*nama\s+serupa",
+        r"mungkin\s+menggunakan\s+nama\s+serupa",
+        r"maaf",
+        r"gagal",
+        r"cannot\s+find",
+        r"not\s+found",
+        r"no\s+information",
+        r"no\s+result",
+        r"unknown",
     ]
-    if any(m in low for m in bad_markers):
+
+    for p in bad_patterns:
+        if re.search(p, low):
+            return "Di tempat"
+
+    # ✅ FIX: heuristik aman — kalau teks panjang kayak paragraf & tidak ada ciri alamat, jadikan "Di tempat"
+    # (alamat biasanya ada: jl/jalan, rt/rw, kec/kab, kota, no., dsb)
+    if len(a) > 120 and not re.search(r"\b(jl|jalan|rt|rw|kec|kel|kab|kota|no\.?|blok|desa)\b", low):
         return "Di tempat"
 
-    if len(a) > 90:
+    # (opsional) kalau terlalu panjang banget tetap dianggap bukan alamat
+    if len(a) > 250:
         return "Di tempat"
 
     return a
