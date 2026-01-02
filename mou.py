@@ -282,6 +282,44 @@ def _center_everywhere_for_needles(doc, needles):
 
 
 # =========================
+# ✅ FIX: set jabatan PIHAK KETIGA secara robust (tanpa ubah bagian lain)
+# =========================
+def _iter_all_paragraphs(doc):
+    for p in doc.paragraphs:
+        yield p
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    yield p
+
+def replace_title_after_name(doc, signer_name: str, new_title: str) -> bool:
+    """
+    Cari paragraf yang memuat signer_name (ttd pihak ketiga),
+    lalu set paragraf non-kosong berikutnya menjadi new_title.
+    """
+    if not signer_name or not new_title:
+        return False
+
+    signer_low = signer_name.strip().lower()
+    paras = list(_iter_all_paragraphs(doc))
+
+    for i, p in enumerate(paras):
+        if signer_low in (p.text or "").strip().lower():
+            for j in range(i + 1, min(i + 6, len(paras))):
+                nxt = paras[j]
+                if (nxt.text or "").strip():
+                    if nxt.runs:
+                        nxt.runs[0].text = new_title
+                        for r in nxt.runs[1:]:
+                            r.text = ""
+                    else:
+                        nxt.add_run(new_title)
+                    return True
+    return False
+
+
+# =========================
 # MoU Counter (as-is)
 # =========================
 
@@ -316,7 +354,7 @@ def get_next_mou_no_depan() -> str:
 
 
 # =========================
-# Create MoU DOCX (as-is)
+# Create MoU DOCX (as-is, hanya perbaikan jab3)
 # =========================
 
 def create_mou_docx(mou_data: dict, fname_base: str) -> str:
@@ -419,9 +457,16 @@ def create_mou_docx(mou_data: dict, fname_base: str) -> str:
 
     if ttd3:
         replace_everywhere_keep_format(doc, ["Yogi Aditya", "Yogi Permana", "Yogi"], ttd3)
+
+    # =========================
+    # ✅ PERBAIKAN UTAMA: jabatan pihak ketiga
+    # - prioritas: set jabatan tepat setelah nama penandatangan pihak ketiga
+    # - fallback: replace "General Manager" global kalau gagal
+    # =========================
     if jab3:
-        replace_everywhere_keep_format(doc, ["General Manager", "GENERAL MANAGER"], jab3)
-        replace_everywhere_keep_format(doc, ["Direktur", "DIREKTUR"], jab3)
+        ok = replace_title_after_name(doc, ttd3, jab3)
+        if not ok:
+            replace_everywhere_keep_format(doc, ["General Manager", "GENERAL MANAGER"], jab3)
 
     contoh_alamat_p3_candidates = [
         "Jl. Karawang – Bekasi KM. 1 Bojongsari, Kec. Kedungwaringin, Kab. Bekasi – Jawa Barat",
