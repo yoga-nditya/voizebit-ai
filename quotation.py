@@ -105,7 +105,7 @@ def parse_amount_id(text: str) -> int:
         return int(digits) if digits else 0
 
 
-# ✅ NEW (MINIMAL): anggap hasil pencarian alamat "tidak ditemukan" = kosong
+# ✅ FIX: Anggap hasil pencarian alamat yang berupa penolakan/ketidakpastian AI sebagai "tidak ditemukan"
 def normalize_found_address(addr: str) -> str:
     if not addr:
         return ""
@@ -115,7 +115,7 @@ def normalize_found_address(addr: str) -> str:
 
     lower = t.lower()
 
-    # kalau hasil search berupa teks penolakan / not found, treat as empty
+    # 1) Pola "not found" umum
     not_found_patterns = [
         r"tidak\s*ditemukan",
         r"tidak\s*ketemu",
@@ -131,12 +131,37 @@ def normalize_found_address(addr: str) -> str:
         r"data\s*tidak\s*tersedia",
     ]
 
+    # 2) Pola jawaban AI panjang seperti di screenshot:
+    # "Saya tidak memiliki informasi yang cukup ... terlalu umum ... placeholder"
+    ai_refusal_patterns = [
+        r"saya\s+tidak\s+memiliki\s+informasi",
+        r"informasi\s+yang\s+cukup",
+        r"tidak\s+cukup\s+informasi",
+        r"tidak\s+dapat\s+menentukan",
+        r"tidak\s+bisa\s+menentukan",
+        r"nama\s+tersebut\s+terlalu\s+umum",
+        r"terlalu\s+umum",
+        r"tidak\s+spesifik",
+        r"nama\s+contoh",
+        r"placeholder",
+        r"banyak\s+perusahaan.*nama\s+serupa",
+        r"mungkin\s+menggunakan\s+nama\s+serupa",
+    ]
+
     for p in not_found_patterns:
         if re.search(p, lower):
             return ""
 
-    # kadang ada jawaban terlalu generik yang bukan alamat
-    # (opsional, tapi aman): kalau terlalu pendek & bukan alamat
+    for p in ai_refusal_patterns:
+        if re.search(p, lower):
+            return ""
+
+    # 3) Heuristik tambahan: kalau teks panjang seperti paragraf & tidak mengandung ciri alamat,
+    # anggap itu bukan alamat.
+    if len(t) > 120 and ("jalan" not in lower and "jl" not in lower and "rt" not in lower and "rw" not in lower):
+        return ""
+
+    # 4) Token invalid pendek
     if len(t) <= 6 and lower in ("-", "none", "null", "n/a"):
         return ""
 
@@ -188,7 +213,7 @@ def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: di
     if state.get("step") == 'nama_perusahaan':
         state['data']['nama_perusahaan'] = text
 
-        # ✅ FIX MINIMAL DI SINI:
+        # ✅ FIX UTAMA: jika hasil search kosong / "not found" / penolakan AI => "Di tempat"
         alamat = normalize_found_address(search_company_address(text))
         if not alamat:
             alamat = normalize_found_address(search_company_address_ai(text))
