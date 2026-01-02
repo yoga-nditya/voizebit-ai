@@ -508,10 +508,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         conversations[sid] = state
 
         out_text = (
-            "Baik, saya akan membantu menyusun <b>MoU Tripartit</b>.<br><br>"
-            f"Nomor awal: <b>{nomor_depan}</b><br>"
-            "Nomor lengkap mengikuti format template, dan tanggal menggunakan tanggal hari ini.<br><br>"
-            "Pertanyaan 1: <b>Nama perusahaan (Pihak Pertama / Penghasil Limbah)?</b>"
+            "Baik, saya akan membantu menyusun <b>MoU</b>.<br><br>"
         )
 
         history_id_created = None
@@ -794,11 +791,6 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
 
         out_text = (
             "<b>MoU berhasil dibuat.</b><br><br>"
-            f"Nomor MoU: <b>{state['data'].get('nomor_surat')}</b><br>"
-            f"Pihak Pertama: <b>{state['data'].get('pihak_pertama')}</b><br>"
-            f"Pihak Kedua: <b>{state['data'].get('pihak_kedua')}</b><br>"
-            f"Pihak Ketiga: <b>{state['data'].get('pihak_ketiga')}</b><br>"
-            f"Jumlah limbah: <b>{len(state['data'].get('items_limbah') or [])} item</b>"
         )
 
         db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
