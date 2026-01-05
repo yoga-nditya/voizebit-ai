@@ -24,6 +24,22 @@ from mou import handle_mou_flow
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = FLASK_SECRET_KEY
 
+# =========================
+# ✅ Pastikan folder file ada: static/files
+# =========================
+# Jika config_new sudah punya FILES_DIR, kita pakai itu.
+# Kalau belum ada, default ke static/files.
+try:
+    _cfg_files_dir = Path(FILES_DIR)  # type: ignore
+except Exception:
+    _cfg_files_dir = None
+
+if _cfg_files_dir is None:
+    FILES_DIR = str(Path("static") / "files")  # fallback
+
+FILES_DIR_PATH = Path(FILES_DIR)
+FILES_DIR_PATH.mkdir(parents=True, exist_ok=True)
+
 # state memory per session
 conversations = {}
 init_db()
@@ -114,9 +130,15 @@ def api_documents():
                 filename = (f.get("filename") or "").strip()
                 if not filename:
                     continue
+
                 title = detail.get("title") or ""
                 task_type = detail.get("task_type") or ""
                 created_at = detail.get("created_at") or ""
+
+                # ✅ Pastikan url ada dan konsisten menuju /download/<filename>
+                url = (f.get("url") or "").strip()
+                if not url:
+                    url = f"/download/{filename}"
 
                 row = {
                     "history_id": int(detail["id"]),
@@ -125,7 +147,7 @@ def api_documents():
                     "created_at": created_at,
                     "type": f.get("type"),
                     "filename": filename,
-                    "url": f.get("url"),
+                    "url": url,
                 }
 
                 if q:
@@ -160,8 +182,6 @@ THUMB_DIR = Path("static") / "thumbs"
 THUMB_DIR.mkdir(parents=True, exist_ok=True)
 
 def _safe_thumb_name(filename: str) -> str:
-    # bikin nama thumbnail stabil: "file.pdf" -> "file.pdf.png"
-    # plus replace karakter aneh
     safe = re.sub(r'[^a-zA-Z0-9._-]+', '_', filename)
     return f"{safe}.png"
 
@@ -181,7 +201,6 @@ def generate_pdf_thumbnail(pdf_path: Path, out_path: Path) -> bool:
             return False
 
         page = doc.load_page(0)
-        # scale biar jelas (sesuaikan kalau mau)
         zoom = 2.0
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -261,38 +280,36 @@ def chat():
 @app.route("/download/<path:filename>")
 def download(filename):
     """
-    ✅ Mode normal: download file (as_attachment=True)
-    ✅ Mode thumbnail: /download/<filename>?thumbnail=1
+    ✅ Default: inline preview (as_attachment=False) => cocok untuk preview PDF di app
+    ✅ Paksa download: /download/<filename>?download=1
+    ✅ Thumbnail: /download/<filename>?thumbnail=1
        - untuk PDF: return PNG preview (inline)
        - untuk non-PDF: 404 (biar app fallback ke icon)
     """
-    file_path = Path(FILES_DIR) / filename
+    file_path = FILES_DIR_PATH / filename
 
     if not file_path.exists():
         return jsonify({"error": "file tidak ditemukan"}), 404
 
     # ✅ thumbnail mode
-    thumb = (request.args.get("thumbnail") or "").strip()
+    thumb = (request.args.get("thumbnail") or "").strip().lower()
     if thumb in ("1", "true", "yes"):
-        # hanya PDF yang kita render
         if str(file_path).lower().endswith(".pdf"):
             thumb_path = THUMB_DIR / _safe_thumb_name(filename)
 
-            # cache thumbnail
-            if not thumb_path.exists() or thumb_path.stat().st_mtime < file_path.stat().st_mtime:
+            if (not thumb_path.exists()) or (thumb_path.stat().st_mtime < file_path.stat().st_mtime):
                 ok = generate_pdf_thumbnail(file_path, thumb_path)
                 if not ok:
-                    # kalau PyMuPDF tidak ada / gagal render
                     return jsonify({"error": "thumbnail generator not available"}), 404
 
-            # return inline image
             return send_file(str(thumb_path), mimetype="image/png", as_attachment=False)
 
-        # non-pdf: belum support thumbnail
         return jsonify({"error": "thumbnail hanya untuk pdf"}), 404
 
-    # ✅ normal download (tetap seperti kamu)
-    return send_from_directory(str(FILES_DIR), filename, as_attachment=True)
+    dl = (request.args.get("download") or "").strip().lower()
+    as_attachment = dl in ("1", "true", "yes")
+
+    return send_from_directory(str(FILES_DIR_PATH), filename, as_attachment=as_attachment)
 
 
 if __name__ == "__main__":
@@ -307,6 +324,7 @@ if __name__ == "__main__":
         print(f"📁 Template: {TEMPLATE_FILE.exists() and '✅ Found' or '❌ Missing'}")
     except Exception:
         pass
+    print(f"📂 FILES_DIR: {FILES_DIR_PATH} (exists={FILES_DIR_PATH.exists()})")
     print(f"🔎 Serper: {SERPER_API_KEY and '✅' or '❌'}")
     print(f"📄 PDF: {PDF_AVAILABLE and f'✅ {PDF_METHOD}' or '❌ Disabled'}")
     print(f"🗄️  Database: {len(LIMBAH_B3_DB)} jenis limbah")

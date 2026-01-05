@@ -1,0 +1,86 @@
+export const COMPANY_DOCS = [
+  {
+    key: '1',
+    title: '001_Surat Pernyataan Tidak Bermasalah 2501 (1)',
+    filename: '001_Surat Pernyataan Tidak Bermasalah 2501 (1).pdf',
+    asset: require('./001_Surat Pernyataan Tidak Bermasalah 2501 (1).pdf'),
+  },
+  {
+    key: '2',
+    title: 'Akta Perubahan Pendirian Perusahaan_compressed',
+    filename: 'Akta Perubahan Pendirian Perusahaan_compressed.pdf',
+    asset: require('./Akta Perubahan Pendirian Perusahaan_compressed.pdf'),
+  },
+  {
+    key: '3',
+    title: 'Salinan 04. Pengesahan Akta Pendirian Perusahaan',
+    filename: 'Salinan 04. Pengesahan Akta Pendirian Perusahaan.pdf',
+    asset: require('./Salinan 04. Pengesahan Akta Pendirian Perusahaan.pdf'),
+  },
+  {
+    key: '4',
+    title: 'Salinan 07. Akta Perubahan Alamat (1)',
+    filename: 'Salinan 07. Akta Perubahan Alamat (1).pdf',
+    asset: require('./Salinan 07. Akta Perubahan Alamat (1).pdf'),
+  },
+  {
+    key: '5',
+    title: 'Salinan 07. Akta Perubahan Alamat',
+    filename: 'Salinan 07. Akta Perubahan Alamat.pdf',
+    asset: require('./Salinan 07. Akta Perubahan Alamat.pdf'),
+  },
+  {
+    key: '6',
+    title: 'Salinan 08. NIB',
+    filename: 'Salinan 08. NIB.pdf',
+    asset: require('./Salinan 08. NIB.pdf'),
+  },
+  {
+    key: '7',
+    title: 'Salinan 09. NPWP STBJ',
+    filename: 'Salinan 09. NPWP STBJ.pdf',
+    asset: require('./Salinan 09. NPWP STBJ.pdf'),
+  },
+  {
+    key: '8',
+    title: 'Salinan 10. SPPKP PT. STBJ 02',
+    filename: 'Salinan 10. SPPKP PT. STBJ 02.pdf',
+    asset: require('./Salinan 10. SPPKP PT. STBJ 02.pdf'),
+  },
+  {
+    key: '9',
+    title: 'Salinan ASURANSI  PT. SARANA TRANS BERSAMA JAYA IP090910082400007 2024',
+    filename: 'Salinan ASURANSI  PT. SARANA TRANS BERSAMA JAYA IP090910082400007 2024.pdf',
+    asset: require('./Salinan ASURANSI  PT. SARANA TRANS BERSAMA JAYA IP090910082400007 2024.pdf'),
+  },
+  {
+    key: '10',
+    title: 'Salinan Izin Angkut PT STBJ',
+    filename: 'Salinan Izin Angkut PT STBJ.pdf',
+    asset: require('./Salinan Izin Angkut PT STBJ.pdf'),
+  },
+  {
+    key: '11',
+    title: 'Salinan PT STBJ BOOKLET 2025',
+    filename: 'Salinan PT STBJ BOOKLET 2025.pdf',
+    asset: require('./Salinan PT STBJ BOOKLET 2025.pdf'),
+  },
+  {
+    key: '12',
+    title: 'Salinan Rekomendasi pt. sarana trans 2022',
+    filename: 'Salinan Rekomendasi pt. sarana trans 2022.pdf',
+    asset: require('./Salinan Rekomendasi pt. sarana trans 2022.pdf'),
+  },
+  {
+    key: '13',
+    title: 'SCHEDULE PT. SARANA TRANS BERSAMA JAYA IP090910082500005(1) (1)',
+    filename: 'SCHEDULE PT. SARANA TRANS BERSAMA JAYA IP090910082500005(1) (1).pdf',
+    asset: require('./SCHEDULE PT. SARANA TRANS BERSAMA JAYA IP090910082500005(1) (1).pdf'),
+  },
+  {
+    key: '14',
+    title: 'SK Kemenhub Sukabumi (1)',
+    filename: 'SK Kemenhub Sukabumi (1).pdf',
+    asset: require('./SK Kemenhub Sukabumi (1).pdf'),
+  },
+];
