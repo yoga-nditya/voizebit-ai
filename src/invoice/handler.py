@@ -83,7 +83,13 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_billto_name":
         state["data"]["bill_to"]["name"] = text.strip()
+
+        # ✅ FIX: jika alamat kosong/tidak ditemukan -> "Di tempat"
         alamat = resolve_company_address(text)
+        alamat = alamat.strip() if isinstance(alamat, str) else ""
+        if not alamat:
+            alamat = "Di tempat"
+
         state["data"]["bill_to"]["address"] = alamat
         state["step"] = "inv_shipto_same"
         conversations[sid] = state
@@ -121,7 +127,13 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
 
     if state.get("step") == "inv_shipto_name":
         state["data"]["ship_to"]["name"] = text.strip()
+
+        # ✅ FIX: jika alamat kosong/tidak ditemukan -> "Di tempat"
         alamat = resolve_company_address(text)
+        alamat = alamat.strip() if isinstance(alamat, str) else ""
+        if not alamat:
+            alamat = "Di tempat"
+
         state["data"]["ship_to"]["address"] = alamat
         state["step"] = "inv_phone"
         conversations[sid] = state
