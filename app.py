@@ -383,7 +383,72 @@ def api_company_documents():
         return jsonify({"items": items})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/api/admin/purge", methods=["POST"])
+def api_admin_purge():
+    """
+    Hapus SEMUA data chat & dokumen.
+    Body JSON:
+    {
+      "confirm": "DELETE_ALL",
+      "delete_files": true
+    }
+    """
+    try:
+        body = request.get_json() or {}
+        confirm = (body.get("confirm") or "").strip()
+        delete_files = bool(body.get("delete_files", False))
 
+        if confirm != "DELETE_ALL":
+            return jsonify({"error": "confirm invalid. set confirm=DELETE_ALL"}), 400
+
+        # ======================
+        # 🗄️ HAPUS DATABASE
+        # ======================
+        import sqlite3
+
+        if not DB_FILE.exists():
+            return jsonify({"error": "DB file tidak ditemukan"}), 404
+
+        conn = sqlite3.connect(DB_FILE)
+        cur = conn.cursor()
+
+        # ⚠️ SESUAIKAN NAMA TABEL JIKA BERBEDA
+        cur.execute("DELETE FROM histories")
+        conn.commit()
+        conn.close()
+
+        deleted_files = 0
+
+        # ======================
+        # 📄 HAPUS FILE DOKUMEN
+        # ======================
+        if delete_files:
+            for p in FILES_DIR.iterdir():
+                if p.is_file():
+                    try:
+                        p.unlink()
+                        deleted_files += 1
+                    except Exception as e:
+                        print("Gagal hapus file:", p.name, e)
+
+            # hapus thumbnail PDF juga
+            if THUMB_DIR.exists():
+                for p in THUMB_DIR.iterdir():
+                    if p.is_file():
+                        try:
+                            p.unlink()
+                        except:
+                            pass
+
+        return jsonify({
+            "ok": True,
+            "db": str(DB_FILE),
+            "files_dir": str(FILES_DIR),
+            "deleted_files": deleted_files
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = FLASK_PORT
