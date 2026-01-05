@@ -4,6 +4,7 @@ import re
 import platform
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote  # ✅ NEW: untuk encode filename yang ada spasi
 
 from flask import Flask, request, jsonify, render_template, send_from_directory, session, send_file
 
@@ -112,6 +113,10 @@ def api_history_delete(history_id):
 
 @app.route("/api/documents", methods=["GET"])
 def api_documents():
+    """
+    Ini endpoint lama: list dokumen berdasarkan DB history (files_json).
+    Tetap aku biarkan apa adanya.
+    """
     try:
         q = (request.args.get("q") or "").strip().lower()
         items = db_list_histories(limit=500)
@@ -276,7 +281,6 @@ def chat():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/download/<path:filename>")
 def download(filename):
     """
@@ -310,6 +314,75 @@ def download(filename):
     as_attachment = dl in ("1", "true", "yes")
 
     return send_from_directory(str(FILES_DIR_PATH), filename, as_attachment=as_attachment)
+
+
+# =========================================================
+# ✅ NEW: Company Documents endpoint
+# List file langsung dari folder static/files (FILES_DIR_PATH)
+# =========================================================
+@app.route("/api/company-documents", methods=["GET"])
+def api_company_documents():
+    """
+    Ambil dokumen langsung dari folder FILES_DIR_PATH (static/files).
+    Support query: ?q= untuk filter nama file.
+
+    Output:
+    {
+      "items": [
+        {
+          "key": "...",
+          "title": "...",
+          "filename": "...",
+          "type": "pdf/docx/xlsx/...",
+          "url": "/download/<filename>",
+          "created_at": "ISO8601"
+        }
+      ]
+    }
+    """
+    try:
+        q = (request.args.get("q") or "").strip().lower()
+
+        if not FILES_DIR_PATH.exists():
+            return jsonify({"items": []})
+
+        items = []
+        for p in FILES_DIR_PATH.iterdir():
+            if not p.is_file():
+                continue
+
+            filename = p.name
+
+            # skip hidden
+            if filename.startswith("."):
+                continue
+
+            # filter search
+            if q and q not in filename.lower():
+                continue
+
+            ext = p.suffix.lower().lstrip(".")
+            file_type = ext if ext else "file"
+
+            # url aman untuk nama file ada spasi
+            url = f"/download/{quote(filename)}"
+
+            created_at = datetime.fromtimestamp(p.stat().st_mtime).isoformat()
+            title = p.stem
+
+            items.append({
+                "key": filename,
+                "title": title,
+                "filename": filename,
+                "type": file_type,
+                "url": url,
+                "created_at": created_at,
+            })
+
+        items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+        return jsonify({"items": items})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
