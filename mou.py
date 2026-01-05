@@ -111,39 +111,92 @@ def set_run_font(run, font_name="Times New Roman", size=10, bold=None):
 
 
 # =========================
-# ✅ NEW: baca angka singkat "1.5jt" => 1,5 juta (bukan 15)
+# ✅ FIX: baca angka singkat (rb/jt/miliar/triliun/k)
 # =========================
 def parse_id_short_amount(text: str):
     """
-    Contoh:
-      "1.5jt" / "1,5jt" / "1.5 juta" -> 1500000
-      "2jt" -> 2000000
-      "0.75jt" -> 750000
-    Return int atau None jika tidak terbaca.
+    Contoh input yang didukung:
+      - "1.5jt" / "1,5jt" / "1.5 juta" / "1,5 juta" -> 1500000
+      - "250rb" / "250 ribu" -> 250000
+      - "2m" / "2 miliar" -> 2000000000
+      - "1.2t" / "1,2 triliun" -> 1200000000000
+      - "10k" -> 10000
+      - "1 koma 5 juta" -> 1500000  (opsional)
+    Return:
+      int atau None jika tidak terbaca.
     """
     if not text:
         return None
-    t = text.strip().lower()
-    t = re.sub(r'\s+', '', t)
 
-    m = re.match(r'^(\d+(?:[.,]\d+)?)\s*(jt|juta)$', t)
-    if not m:
-        m = re.match(r'^(\d+(?:[.,]\d+)?)(jt|juta)$', t)
+    raw = text.strip()
+    low = raw.lower().strip()
+
+    # ---- 1) format "koma" (opsional): "1 koma 5 juta"
+    if "koma" in low:
+        scale_words = {
+            "ribu": 1_000,
+            "rb": 1_000,
+            "k": 1_000,
+            "jt": 1_000_000,
+            "juta": 1_000_000,
+            "m": 1_000_000_000,
+            "miliar": 1_000_000_000,
+            "t": 1_000_000_000_000,
+            "triliun": 1_000_000_000_000,
+        }
+        scale = None
+        for k, v in scale_words.items():
+            if re.search(rf"\b{k}\b", low):
+                scale = v
+                break
+
+        parts = re.split(r"\bkoma\b", low, maxsplit=1)
+        left = parts[0].strip()
+        right = parts[1].strip() if len(parts) > 1 else ""
+
+        left_tok = re.findall(r"[0-9]+", left)
+        right_tok = re.findall(r"[0-9]+", right)
+
+        if left_tok and right_tok:
+            try:
+                val = float(f"{left_tok[-1]}.{right_tok[0]}")
+                if scale:
+                    val *= scale
+                return int(round(val))
+            except Exception:
+                pass
+
+    # ---- 2) format compact: "1.5jt", "250rb", "2m", "10k"
+    # normalize: buang spasi
+    t = re.sub(r"\s+", "", low)
+
+    m = re.match(r"^(\d+(?:[.,]\d+)?)(k|rb|ribu|jt|juta|m|miliar|t|triliun)\b", t, re.IGNORECASE)
     if not m:
         return None
 
-    num_s = m.group(1)
-    suffix = m.group(2)
+    num_s = m.group(1).replace(",", ".")
+    suf = m.group(2).lower()
 
-    num_s = num_s.replace(',', '.')
+    mult_map = {
+        "k": 1_000,
+        "rb": 1_000,
+        "ribu": 1_000,
+        "jt": 1_000_000,
+        "juta": 1_000_000,
+        "m": 1_000_000_000,
+        "miliar": 1_000_000_000,
+        "t": 1_000_000_000_000,
+        "triliun": 1_000_000_000_000,
+    }
+
     try:
         val = float(num_s)
-    except:
+    except Exception:
         return None
 
-    mult = 1
-    if suffix in ('jt', 'juta'):
-        mult = 1_000_000
+    mult = mult_map.get(suf)
+    if not mult:
+        return None
 
     return int(round(val * mult))
 
@@ -161,8 +214,8 @@ def _sanitize_company_address(addr: str) -> str:
     bad_patterns = [
         r"tidak\s*dapat\s+menentukan",
         r"tidak\s*bisa\s+menentukan",
-        r"tidak\s*dapat\s+menemukan",
-        r"tidak\s*bisa\s+menemukan",
+        r"tidak\s+dapat\s+menemukan",
+        r"tidak\s+bisa\s+menemukan",
         r"tidak\s*ditemukan",
         r"tidak\s*ketemu",
         r"tidak\s+ada\s+informasi",
@@ -204,7 +257,7 @@ def resolve_company_address(company_name: str) -> str:
     addr = ""
     try:
         addr = (search_company_address(company_name) or "").strip()
-    except:
+    except Exception:
         addr = ""
     addr = _sanitize_company_address(addr)
     if addr != "Di tempat":
@@ -212,7 +265,7 @@ def resolve_company_address(company_name: str) -> str:
 
     try:
         addr2 = (search_company_address_ai(company_name) or "").strip()
-    except:
+    except Exception:
         addr2 = ""
     return _sanitize_company_address(addr2)
 
@@ -255,7 +308,7 @@ def replace_in_cell_keep_format(cell, old: str, new: str):
     return changed
 
 def replace_everywhere_keep_format(doc, old_list, new_value):
-    if not new_value:
+    if new_value is None:
         return
     for p in doc.paragraphs:
         for old in old_list:
@@ -300,7 +353,7 @@ def load_mou_counter() -> int:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f) or {}
         return int(data.get("counter", -1))
-    except:
+    except Exception:
         return -1
 
 def save_mou_counter(n: int) -> None:

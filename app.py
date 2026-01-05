@@ -1,4 +1,3 @@
-# app.py
 import uuid
 import json
 import re

@@ -39,6 +39,79 @@ def normalize_id_number_text(text: str) -> str:
 
 
 # =========================
+# ✅ NEW: parse nominal singkat: 1.5jt, 250rb, 10k, 2m, 1.2t, dll
+# =========================
+def parse_id_short_amount(text: str):
+    """
+    Contoh:
+      "1.5jt" / "1,5jt" / "1.5 juta" -> 1500000
+      "250rb" / "250 ribu" -> 250000
+      "10k" -> 10000
+      "2m" / "2 miliar" -> 2000000000
+      "1.2t" / "1,2 triliun" -> 1200000000000
+      "Rp 1.5jt" -> 1500000
+    Return int atau None.
+    """
+    if text is None:
+        return None
+
+    raw = str(text).strip().lower()
+    if not raw:
+        return None
+
+    # buang prefix/suffix mata uang
+    raw = raw.replace("rupiah", "").replace("idr", "")
+    raw = raw.strip()
+    raw = re.sub(r"^\s*rp\.?\s*", "", raw)  # "rp 1.5jt"
+
+    # normalisasi spasi
+    t = re.sub(r"\s+", " ", raw).strip()
+
+    # ambil (angka) + (suf)
+    # dukung "1.5 jt", "1,5juta", "250 rb", dll
+    m = re.match(
+        r"^(\d+(?:[.,]\d+)?)\s*(k|rb|ribu|jt|juta|m|miliar|t|triliun)\b",
+        t,
+        flags=re.IGNORECASE
+    )
+    if not m:
+        # juga dukung format tanpa spasi yang “nempel” rapat: "1.5jt"
+        t2 = re.sub(r"\s+", "", raw)
+        m = re.match(
+            r"^(\d+(?:[.,]\d+)?)(k|rb|ribu|jt|juta|m|miliar|t|triliun)\b",
+            t2,
+            flags=re.IGNORECASE
+        )
+        if not m:
+            return None
+
+    num_s = m.group(1).replace(",", ".")
+    suf = m.group(2).lower()
+
+    mult_map = {
+        "k": 1_000,
+        "rb": 1_000,
+        "ribu": 1_000,
+        "jt": 1_000_000,
+        "juta": 1_000_000,
+        "m": 1_000_000_000,
+        "miliar": 1_000_000_000,
+        "t": 1_000_000_000_000,
+        "triliun": 1_000_000_000_000,
+    }
+
+    mult = mult_map.get(suf)
+    if not mult:
+        return None
+
+    try:
+        val = float(num_s)
+        return int(round(val * mult))
+    except:
+        return None
+
+
+# =========================
 # ✅ NEW: Validasi input nominal (harga/freight/deposit)
 # =========================
 _ID_NUMBER_HINT_WORDS = set([
@@ -49,7 +122,7 @@ _ID_NUMBER_HINT_WORDS = set([
     "ribu", "juta", "miliar", "triliun",
     "koma",
     "rupiah", "rp", "idr",
-    "jt",
+    "jt", "rb", "k", "m", "t",
 ])
 
 def _is_zero_like_input(text: str) -> bool:
@@ -66,7 +139,6 @@ def _is_zero_like_input(text: str) -> bool:
     if re.fullmatch(r"0+(?:[.,]0+)?\s*(rp|idr|rupiah)", t):
         return True
     if "nol" in t or "kosong" in t:
-        # contoh: "nol rupiah"
         return True
     return False
 
@@ -74,7 +146,7 @@ def _is_amount_like_input(text: str) -> bool:
     """
     True jika input terlihat seperti nominal:
     - ada digit (0-9), atau
-    - mengandung kata angka Indonesia (nol, satu, ... juta, ribu, koma, rp, rupiah, jt, dst)
+    - mengandung kata angka Indonesia (nol, satu, ... juta, ribu, koma, rp, rupiah, jt, rb, k, m, t, dst)
     """
     if not text:
         return False
@@ -182,6 +254,12 @@ def words_to_number_id(text: str):
         return None
 
     raw = text.strip().lower()
+
+    # ✅ tambahan: coba parse nominal singkat dulu
+    short_val = parse_id_short_amount(raw)
+    if short_val is not None:
+        return float(short_val)
+
     norm = normalize_id_number_text(raw)
     if re.fullmatch(r"\d+(?:\.\d+)?", norm):
         try:
@@ -233,6 +311,7 @@ def words_to_number_id(text: str):
 
 # =========================
 # ✅ FIX: parse_amount_id jadi STRICT (None kalau tidak valid)
+# + ✅ SUPPORT: "1.5jt / 250rb / 10k / 2m / 1.2t"
 # =========================
 def parse_amount_id(text: str):
     """
@@ -255,6 +334,12 @@ def parse_amount_id(text: str):
     if _is_zero_like_input(raw):
         return 0
 
+    # ✅ 1) PRIORITAS: nominal singkat (1.5jt, 250rb, 10k, 2m, 1.2t)
+    short_val = parse_id_short_amount(raw)
+    if short_val is not None:
+        return int(short_val)
+
+    # ✅ 2) words parser (dua juta, satu koma lima juta, dst)
     wv = words_to_number_id(raw)
     if wv is not None:
         try:
@@ -262,11 +347,11 @@ def parse_amount_id(text: str):
         except:
             pass
 
+    # ✅ 3) fallback converter voice
     tnorm = normalize_id_number_text(str(text))
     val = convert_voice_to_number(tnorm)
 
     if val is None:
-        # kalau tidak bisa convert, tapi input terlihat nominal -> coba ambil digit
         digits = re.sub(r"\D+", "", tnorm)
         if digits:
             try:
@@ -796,17 +881,20 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     def border_box_thin():
         return Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
+    def money(cell):
+        cell.number_format = "#,##0"
+
     for i, (lab, val) in enumerate(labels):
         rr = totals_top + i
 
         ws[f"I{rr}"].value = lab
         ws[f"I{rr}"].alignment = right
-        ws[f"I{rr}"].font = bold
+        ws[f"I{rr}"].font = Font(bold=True)
         ws[f"I{rr}"].border = no_border
 
         ws[f"J{rr}"].value = val
         ws[f"J{rr}"].alignment = right
-        ws[f"J{rr}"].font = bold if lab in ("Balance Due",) else Font(bold=False)
+        ws[f"J{rr}"].font = Font(bold=True) if lab in ("Balance Due",) else Font(bold=False)
         ws[f"J{rr}"].border = border_box_thin()
         money(ws[f"J{rr}"])
 
@@ -818,7 +906,7 @@ def create_invoice_xlsx(inv: dict, fname_base: str) -> str:
     ws.merge_cells(f"G{box_top}:J{box_top}")
     ws[f"G{box_top}"].value = "PT. Sarana Trans Bersama Jaya"
     ws[f"G{box_top}"].alignment = center
-    ws[f"G{box_top}"].font = bold
+    ws[f"G{box_top}"].font = Font(bold=True)
 
     set_outer_border_only(ws, box_top, 7, box_bottom, 10, style="medium")
 
@@ -1276,7 +1364,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         if price is None:
             out_text = (
                 "Input <b>harga</b> tidak valid.<br>"
-                "Mohon masukkan angka. Contoh: <b>1500000</b> atau <b>nol</b> / <b>0</b>.<br><br>"
+                "Mohon masukkan angka. Contoh: <b>1500000</b> atau <b>1.5jt</b> atau <b>250rb</b> atau <b>nol</b> / <b>0</b>.<br><br>"
                 "Pertanyaan 6D: <b>Harga (Rp)?</b>"
             )
             if history_id_in:
@@ -1328,7 +1416,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         if freight_val is None:
             out_text = (
                 "Input <b>freight</b> tidak valid.<br>"
-                "Mohon masukkan angka. Contoh: <b>0</b> / <b>nol</b> jika tidak ada.<br><br>"
+                "Mohon masukkan angka. Contoh: <b>0</b> / <b>nol</b> / <b>1.5jt</b> jika ada.<br><br>"
                 "Pertanyaan 7: <b>Biaya transportasi/Freight (Rp)?</b>"
             )
             if history_id_in:
@@ -1352,7 +1440,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
         if dep_val is None:
             out_text = (
                 "Input <b>deposit</b> tidak valid.<br>"
-                "Mohon masukkan angka. Contoh: <b>0</b> / <b>nol</b> jika tidak ada.<br><br>"
+                "Mohon masukkan angka. Contoh: <b>0</b> / <b>nol</b> / <b>250rb</b> jika ada.<br><br>"
                 "Pertanyaan 8: <b>Deposit (Rp)?</b>"
             )
             if history_id_in:
@@ -1375,7 +1463,7 @@ def handle_invoice_flow(data: dict, text: str, lower: str, sid: str, state: dict
             {"type": "pdf", "filename": pdf_preview, "url": f"/download/{pdf_preview}"},
         ]
 
-        conversations[sid] = {"step": "idle", "data": {}} 
+        conversations[sid] = {"step": "idle", "data": {}}
 
         history_title = f"Invoice {nama_pt_raw}" if nama_pt_raw else "Invoice"
         history_task_type = "invoice"

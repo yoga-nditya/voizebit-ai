@@ -1,0 +1,398 @@
+import re
+import json
+from datetime import datetime
+
+from limbah_database import (
+    find_limbah_by_kode,
+    find_limbah_by_jenis,
+    parse_termin_days,
+    angka_ke_terbilang,
+    format_rupiah,
+)
+
+from utils import (
+    db_insert_history, db_append_message, db_update_state,
+    get_next_nomor, create_docx, create_pdf,
+    search_company_address, search_company_address_ai,
+)
+
+from .helpers import (
+    is_non_b3_input,
+    parse_amount_id,
+    normalize_found_address,
+)
+
+from .docx_patch import patch_docx_year_only
+
+
+# =========================
+# CHAT HANDLER QUOTATION
+# =========================
+
+def handle_quotation_flow(data: dict, text: str, lower: str, sid: str, state: dict, conversations: dict, history_id_in):
+    """
+    Return:
+      - None jika bukan flow quotation
+      - dict response jika handled
+    """
+
+    if ('quotation' in lower or 'penawaran' in lower or ('buat' in lower and 'mou' not in lower)) and (state.get("step") == "idle"):
+        nomor_depan = get_next_nomor()
+        state['step'] = 'nama_perusahaan'
+        now = datetime.now()
+        state['data'] = {'nomor_depan': nomor_depan, 'items_limbah': [], 'bulan_romawi': now.strftime('%m')}
+        conversations[sid] = state
+
+        out_text = (
+            f"Baik, saya akan membantu membuat quotation.<br><br>"
+            f"Nomor surat: <b>{nomor_depan}</b><br><br>"
+            f"Pertanyaan 1: <b>Nama perusahaan?</b>"
+        )
+
+        history_id_created = None
+        if not history_id_in:
+            history_id_created = db_insert_history(
+                title="Chat Baru",
+                task_type=data.get("taskType") or "penawaran",
+                data={},
+                files=[],
+                messages=[
+                    {"id": __import__("uuid").uuid4().hex[:12], "sender": "user", "text": text, "files": [], "timestamp": datetime.now().isoformat()},
+                    {"id": __import__("uuid").uuid4().hex[:12], "sender": "assistant", "text": re.sub(r'<br\s*/?>', '\n', out_text), "files": [], "timestamp": datetime.now().isoformat()},
+                ],
+                state=state
+            )
+        else:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_created or history_id_in}
+
+    if state.get("step") == 'nama_perusahaan':
+        state['data']['nama_perusahaan'] = text
+
+        # ✅ FIX UTAMA: jika hasil search kosong / "not found" / penolakan AI => "Di tempat"
+        alamat = normalize_found_address(search_company_address(text))
+        if not alamat:
+            alamat = normalize_found_address(search_company_address_ai(text))
+        if not alamat:
+            alamat = "Di tempat"
+
+        state['data']['alamat_perusahaan'] = alamat
+        state['step'] = 'jenis_kode_limbah'
+        state['data']['current_item'] = {}
+        conversations[sid] = state
+
+        out_text = (
+            f"Nama perusahaan: <b>{text}</b><br>"
+            f"Alamat: <b>{alamat}</b><br><br>"
+            f"Item 1<br>"
+            f"Pertanyaan 2: <b>Sebutkan jenis limbah atau kode limbah</b><br>"
+            f"<i>Contoh: A102d atau aki baterai bekas</i>"
+        )
+
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'jenis_kode_limbah':
+        if is_non_b3_input(text):
+            state['data']['current_item']['kode_limbah'] = "NON B3"
+            state['data']['current_item']['jenis_limbah'] = ""
+            state['data']['current_item']['satuan'] = ""
+            state['step'] = 'manual_jenis_limbah'
+            conversations[sid] = state
+
+            out_text = (
+                "Kode limbah: <b>NON B3</b><br><br>"
+                "Pertanyaan 2A: <b>Jenis limbah (manual) apa?</b>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return {"text": out_text, "history_id": history_id_in}
+
+        kode, data_limbah = find_limbah_by_kode(text)
+        if kode and data_limbah:
+            state['data']['current_item']['kode_limbah'] = kode
+            state['data']['current_item']['jenis_limbah'] = data_limbah['jenis']
+            state['data']['current_item']['satuan'] = data_limbah['satuan']
+            state['step'] = 'harga'
+            conversations[sid] = state
+            out_text = (
+                f"Kode limbah: <b>{kode}</b><br>"
+                f"Jenis limbah: <b>{data_limbah['jenis']}</b><br>"
+                f"Satuan: <b>{data_limbah['satuan']}</b><br><br>"
+                f"Pertanyaan 3: <b>Harga (Rp)?</b>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return {"text": out_text, "history_id": history_id_in}
+        else:
+            kode, data_limbah = find_limbah_by_jenis(text)
+            if kode and data_limbah:
+                state['data']['current_item']['kode_limbah'] = kode
+                state['data']['current_item']['jenis_limbah'] = data_limbah['jenis']
+                state['data']['current_item']['satuan'] = data_limbah['satuan']
+                state['step'] = 'harga'
+                conversations[sid] = state
+                out_text = (
+                    f"Kode limbah: <b>{kode}</b><br>"
+                    f"Jenis limbah: <b>{data_limbah['jenis']}</b><br>"
+                    f"Satuan: <b>{data_limbah['satuan']}</b><br><br>"
+                    f"Pertanyaan 3: <b>Harga (Rp)?</b>"
+                )
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+                return {"text": out_text, "history_id": history_id_in}
+            else:
+                out_text = (
+                    f"Maaf, data limbah <b>{text}</b> tidak ditemukan.<br><br>"
+                    "Silakan coba lagi dengan salah satu format berikut:<br>"
+                    "• Kode limbah (contoh: A102d, B105d)<br>"
+                    "• Nama jenis limbah (contoh: aki baterai bekas, minyak pelumas bekas)<br>"
+                    "• Atau ketik <b>NON B3</b> untuk input manual"
+                )
+                if history_id_in:
+                    db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                    db_update_state(int(history_id_in), state)
+                return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'manual_jenis_limbah':
+        state['data']['current_item']['jenis_limbah'] = text
+        state['step'] = 'manual_satuan'
+        conversations[sid] = state
+        out_text = (
+            f"Jenis limbah (manual): <b>{text}</b><br><br>"
+            "Pertanyaan 2B: <b>Satuan (manual) apa?</b>"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'manual_satuan':
+        state['data']['current_item']['satuan'] = text
+        state['step'] = 'harga'
+        conversations[sid] = state
+        out_text = (
+            f"Satuan (manual): <b>{text}</b><br><br>"
+            "Pertanyaan 3: <b>Harga (Rp)?</b>"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'harga':
+        harga_converted = parse_amount_id(text)
+        state['data']['current_item']['harga'] = harga_converted
+        state['data']['items_limbah'].append(state['data']['current_item'])
+        num = len(state['data']['items_limbah'])
+        state['step'] = 'tambah_item'
+        conversations[sid] = state
+        harga_formatted = format_rupiah(harga_converted)
+        out_text = (
+            f"Item {num} tersimpan.<br>"
+            f"Harga: <b>Rp {harga_formatted}</b><br><br>"
+            "Pertanyaan: <b>Tambah item lagi?</b> (ya/tidak)"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'tambah_item':
+        if re.match(r'^\d+', text.strip()):
+            out_text = (
+                "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+                "Pertanyaan: <b>Tambah item lagi?</b>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            return {"text": out_text, "history_id": history_id_in}
+
+        if 'ya' in lower or 'iya' in lower:
+            num = len(state['data']['items_limbah'])
+            state['step'] = 'jenis_kode_limbah'
+            state['data']['current_item'] = {}
+            conversations[sid] = state
+            out_text = (
+                f"Item {num+1}<br>"
+                "Pertanyaan 2: <b>Sebutkan jenis limbah atau kode limbah</b><br>"
+                "<i>Contoh: A102d atau aki baterai bekas</i>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return {"text": out_text, "history_id": history_id_in}
+
+        if 'tidak' in lower or 'skip' in lower or 'lewat' in lower or 'gak' in lower or 'nggak' in lower:
+            state['step'] = 'harga_transportasi'
+            conversations[sid] = state
+            out_text = (
+                f"Jumlah item: <b>{len(state['data']['items_limbah'])}</b><br><br>"
+                "Pertanyaan 4: <b>Biaya transportasi (Rp)?</b><br>"
+                "<i>Satuan: ritase</i>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return {"text": out_text, "history_id": history_id_in}
+
+        out_text = (
+            "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+            "Pertanyaan: <b>Tambah item lagi?</b>"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'harga_transportasi':
+        transportasi_converted = parse_amount_id(text)
+        state['data']['harga_transportasi'] = transportasi_converted
+        state['step'] = 'tanya_mou'
+        conversations[sid] = state
+        transportasi_formatted = format_rupiah(transportasi_converted)
+        out_text = (
+            f"Biaya transportasi: <b>Rp {transportasi_formatted}/ritase</b><br><br>"
+            "Pertanyaan 5: <b>Tambahkan biaya MoU?</b> (ya/tidak)"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'tanya_mou':
+        if re.match(r'^\d+', text.strip()):
+            out_text = (
+                "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+                "Pertanyaan 5: <b>Tambahkan biaya MoU?</b> (ya/tidak)"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            return {"text": out_text, "history_id": history_id_in}
+
+        if 'ya' in lower or 'iya' in lower:
+            state['step'] = 'harga_mou'
+            conversations[sid] = state
+            out_text = (
+                "Pertanyaan: <b>Biaya MoU (Rp)?</b><br>"
+                "<i>Satuan: tahun</i>"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return {"text": out_text, "history_id": history_id_in}
+
+        if 'tidak' in lower or 'skip' in lower or 'lewat' in lower or 'gak' in lower or 'nggak' in lower:
+            state['data']['harga_mou'] = None
+            state['step'] = 'tanya_termin'
+            conversations[sid] = state
+            out_text = (
+                "Pertanyaan 6: <b>Edit termin pembayaran?</b><br>"
+                "<i>Default: 14 hari</i><br>"
+                "(Ketik angka, atau ketik <b>tidak</b> untuk menggunakan default.)"
+            )
+            if history_id_in:
+                db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+                db_update_state(int(history_id_in), state)
+            return {"text": out_text, "history_id": history_id_in}
+
+        out_text = (
+            "Mohon jawab dengan <b>ya</b> atau <b>tidak</b>.<br><br>"
+            "Pertanyaan 5: <b>Tambahkan biaya MoU?</b> (ya/tidak)"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'harga_mou':
+        mou_converted = parse_amount_id(text)
+        state['data']['harga_mou'] = mou_converted
+        state['step'] = 'tanya_termin'
+        conversations[sid] = state
+        mou_formatted = format_rupiah(mou_converted)
+        out_text = (
+            f"Biaya MoU: <b>Rp {mou_formatted}/tahun</b><br><br>"
+            "Pertanyaan 6: <b>Edit termin pembayaran?</b><br>"
+            "<i>Default: 14 hari</i><br>"
+            "(Ketik angka, atau ketik <b>tidak</b> untuk menggunakan default.)"
+        )
+        if history_id_in:
+            db_append_message(int(history_id_in), "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=[])
+            db_update_state(int(history_id_in), state)
+        return {"text": out_text, "history_id": history_id_in}
+
+    if state.get("step") == 'tanya_termin':
+        if 'tidak' in lower or 'skip' in lower or 'lewat' in lower:
+            state['data']['termin_hari'] = '14'
+        else:
+            state['data']['termin_hari'] = parse_termin_days(text, default=14, min_days=1, max_days=365)
+
+        nama_pt_raw = state['data'].get('nama_perusahaan', '').strip()
+        safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
+        safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
+        base_fname = f"Quotation - {safe_pt}" if safe_pt else "Quotation - Penawaran"
+        fname = base_fname
+
+        docx = create_docx(state['data'], fname)
+
+        # ✅ NEW: setelah docx jadi, paksa tahunnya ikut tahun sekarang
+        try:
+            patch_docx_year_only(docx)
+        except Exception:
+            pass
+
+        pdf = create_pdf(fname)
+
+        conversations[sid] = {'step': 'idle', 'data': {}}
+
+        files = [{"type": "docx", "filename": docx, "url": f"/download/{docx}"}]
+        if pdf:
+            files.append({"type": "pdf", "filename": pdf, "url": f"/download/{pdf}"})
+
+        nama_pt = state['data'].get('nama_perusahaan', '').strip()
+        history_title = f"Penawaran {nama_pt}" if nama_pt else "Penawaran"
+        history_task_type = "penawaran"
+
+        if history_id_in:
+            from utils import db_connect
+            conn = db_connect()
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE chat_history
+                SET title = ?, task_type = ?, data_json = ?, files_json = ?
+                WHERE id = ?
+            """, (
+                history_title,
+                history_task_type,
+                json.dumps(state['data'], ensure_ascii=False),
+                json.dumps(files, ensure_ascii=False),
+                int(history_id_in),
+            ))
+            conn.commit()
+            conn.close()
+            history_id = int(history_id_in)
+        else:
+            history_id = db_insert_history(
+                title=history_title,
+                task_type=history_task_type,
+                data=state['data'],
+                files=files,
+                messages=[],
+                state={}
+            )
+
+        termin_terbilang = angka_ke_terbilang(state['data']['termin_hari'])
+        out_text = (
+            f"Termin pembayaran: <b>{state['data']['termin_hari']} ({termin_terbilang}) hari</b><br><br>"
+            "<b>Quotation berhasil dibuat.</b>"
+        )
+        db_append_message(history_id, "assistant", re.sub(r'<br\s*/?>', '\n', out_text), files=files)
+
+        return {"text": out_text, "files": files, "history_id": history_id}
+
+    return None
