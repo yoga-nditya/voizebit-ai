@@ -4,7 +4,7 @@ import re
 import platform
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote  # ✅ NEW: untuk encode filename yang ada spasi
+from urllib.parse import quote  # ✅ untuk encode filename (spasi, dll)
 
 from flask import Flask, request, jsonify, render_template, send_from_directory, session, send_file
 
@@ -28,17 +28,13 @@ app.secret_key = FLASK_SECRET_KEY
 # =========================
 # ✅ Pastikan folder file ada: static/files
 # =========================
-# Jika config_new sudah punya FILES_DIR, kita pakai itu.
-# Kalau belum ada, default ke static/files.
+# FILES_DIR dari config_new.py = Path(BASE_DIR/static/files)
+# Di sini kita pakai Path object konsisten.
 try:
-    _cfg_files_dir = Path(FILES_DIR)  # type: ignore
+    FILES_DIR_PATH = Path(FILES_DIR)  # type: ignore
 except Exception:
-    _cfg_files_dir = None
+    FILES_DIR_PATH = Path("static") / "files"
 
-if _cfg_files_dir is None:
-    FILES_DIR = str(Path("static") / "files")  # fallback
-
-FILES_DIR_PATH = Path(FILES_DIR)
 FILES_DIR_PATH.mkdir(parents=True, exist_ok=True)
 
 # state memory per session
@@ -56,6 +52,9 @@ def add_cors_headers(resp):
 def index():
     return render_template("index.html")
 
+# =========================
+# HISTORY (DB: chat_history)
+# =========================
 @app.route("/api/history", methods=["GET"])
 def api_history_list():
     try:
@@ -85,7 +84,6 @@ def api_history_detail(history_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/api/history/<int:history_id>", methods=["PUT"])
 def api_history_update(history_id):
     try:
@@ -100,7 +98,6 @@ def api_history_update(history_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route("/api/history/<int:history_id>", methods=["DELETE"])
 def api_history_delete(history_id):
     try:
@@ -111,11 +108,14 @@ def api_history_delete(history_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ==========================================
+# DOCUMENTS (DB-based) - endpoint lama
+# ==========================================
 @app.route("/api/documents", methods=["GET"])
 def api_documents():
     """
-    Ini endpoint lama: list dokumen berdasarkan DB history (files_json).
-    Tetap aku biarkan apa adanya.
+    Endpoint lama: list dokumen berdasarkan DB history (files_json).
+    Tetap ada kalau masih dipakai.
     """
     try:
         q = (request.args.get("q") or "").strip().lower()
@@ -140,17 +140,16 @@ def api_documents():
                 task_type = detail.get("task_type") or ""
                 created_at = detail.get("created_at") or ""
 
-                # ✅ Pastikan url ada dan konsisten menuju /download/<filename>
                 url = (f.get("url") or "").strip()
                 if not url:
-                    url = f"/download/{filename}"
+                    url = f"/download/{quote(filename)}"
 
                 row = {
                     "history_id": int(detail["id"]),
                     "history_title": title,
                     "task_type": task_type,
                     "created_at": created_at,
-                    "type": f.get("type"),
+                    "type": (f.get("type") or Path(filename).suffix.lower().lstrip(".")) or "file",
                     "filename": filename,
                     "url": url,
                 }
@@ -167,7 +166,6 @@ def api_documents():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 # =========================
 # Helper: reset / cancel flow
 # =========================
@@ -175,10 +173,8 @@ def is_cancel_cmd(lower: str) -> bool:
     keys = ["batal", "cancel", "reset", "ulang", "start over", "keluar"]
     return any(k in lower for k in keys)
 
-
 def reset_state(sid: str):
     conversations[sid] = {"step": "idle", "data": {}}
-
 
 # =========================
 # ✅ Helper: PDF thumbnail generator (page 1 -> PNG)
@@ -216,7 +212,9 @@ def generate_pdf_thumbnail(pdf_path: Path, out_path: Path) -> bool:
     except Exception:
         return False
 
-
+# =========================
+# CHAT
+# =========================
 @app.route("/api/chat", methods=["POST"])
 def chat():
     try:
@@ -281,6 +279,9 @@ def chat():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# =========================
+# DOWNLOAD / PREVIEW FILE
+# =========================
 @app.route("/download/<path:filename>")
 def download(filename):
     """
@@ -295,7 +296,7 @@ def download(filename):
     if not file_path.exists():
         return jsonify({"error": "file tidak ditemukan"}), 404
 
-    # ✅ thumbnail mode
+    # thumbnail mode
     thumb = (request.args.get("thumbnail") or "").strip().lower()
     if thumb in ("1", "true", "yes"):
         if str(file_path).lower().endswith(".pdf"):
@@ -312,13 +313,10 @@ def download(filename):
 
     dl = (request.args.get("download") or "").strip().lower()
     as_attachment = dl in ("1", "true", "yes")
-
     return send_from_directory(str(FILES_DIR_PATH), filename, as_attachment=as_attachment)
 
-
 # =========================================================
-# ✅ NEW: Company Documents endpoint
-# List file langsung dari folder static/files (FILES_DIR_PATH)
+# ✅ COMPANY DOCUMENTS - LIST LANGSUNG DARI static/files
 # =========================================================
 @app.route("/api/company-documents", methods=["GET"])
 def api_company_documents():
@@ -327,18 +325,7 @@ def api_company_documents():
     Support query: ?q= untuk filter nama file.
 
     Output:
-    {
-      "items": [
-        {
-          "key": "...",
-          "title": "...",
-          "filename": "...",
-          "type": "pdf/docx/xlsx/...",
-          "url": "/download/<filename>",
-          "created_at": "ISO8601"
-        }
-      ]
-    }
+    { "items": [ { filename, type, url, created_at, title } ] }
     """
     try:
         q = (request.args.get("q") or "").strip().lower()
@@ -352,38 +339,36 @@ def api_company_documents():
                 continue
 
             filename = p.name
-
-            # skip hidden
             if filename.startswith("."):
                 continue
 
-            # filter search
             if q and q not in filename.lower():
                 continue
 
             ext = p.suffix.lower().lstrip(".")
             file_type = ext if ext else "file"
-
-            # url aman untuk nama file ada spasi
             url = f"/download/{quote(filename)}"
-
             created_at = datetime.fromtimestamp(p.stat().st_mtime).isoformat()
-            title = p.stem
 
             items.append({
-                "key": filename,
-                "title": title,
-                "filename": filename,
-                "type": file_type,
-                "url": url,
+                "history_id": 0,
+                "history_title": "",
+                "task_type": "company",
                 "created_at": created_at,
+                "type": file_type,
+                "filename": filename,
+                "url": url,
+                "title": p.stem,
             })
 
         items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
         return jsonify({"items": items})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    
+
+# =========================================================
+# ✅ ADMIN PURGE - HAPUS CHAT DB + FILE static/files
+# =========================================================
 @app.route("/api/admin/purge", methods=["POST"])
 def api_admin_purge():
     """
@@ -403,18 +388,13 @@ def api_admin_purge():
             return jsonify({"error": "confirm invalid. set confirm=DELETE_ALL"}), 400
 
         # ======================
-        # 🗄️ HAPUS DATABASE
+        # 🗄️ HAPUS DATABASE (TABLE YANG BENAR: chat_history)
         # ======================
         import sqlite3
 
-        if not DB_FILE.exists():
-            return jsonify({"error": "DB file tidak ditemukan"}), 404
-
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(str(DB_FILE))
         cur = conn.cursor()
-
-        # ⚠️ SESUAIKAN NAMA TABEL JIKA BERBEDA
-        cur.execute("DELETE FROM histories")
+        cur.execute("DELETE FROM chat_history")  # ✅ FIX: bukan histories
         conn.commit()
         conn.close()
 
@@ -424,7 +404,7 @@ def api_admin_purge():
         # 📄 HAPUS FILE DOKUMEN
         # ======================
         if delete_files:
-            for p in FILES_DIR.iterdir():
+            for p in FILES_DIR_PATH.iterdir():
                 if p.is_file():
                     try:
                         p.unlink()
@@ -443,8 +423,9 @@ def api_admin_purge():
 
         return jsonify({
             "ok": True,
+            "deleted_table": "chat_history",
             "db": str(DB_FILE),
-            "files_dir": str(FILES_DIR),
+            "files_dir": str(FILES_DIR_PATH),
             "deleted_files": deleted_files
         })
     except Exception as e:
