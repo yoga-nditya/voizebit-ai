@@ -34,24 +34,29 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
       - dict response jika handled
     """
 
-    if ('mou' in lower) and (state.get('step') == 'idle'):
+    # ✅ FIX: Reset state jika user mulai flow baru tanpa history_id
+    # Ini memastikan bahwa setiap kali user klik "Buatkan MoU" dari Home akan mulai dari awal
+    if ('mou' in lower) and (not history_id_in or state.get('step') == 'idle'):
         nomor_depan = get_next_mou_no_depan()
-        state['step'] = 'mou_pihak_pertama'
-        state['data'] = {
-            'nomor_depan': nomor_depan,
-            'nomor_surat': "",
-            'items_limbah': [],
-            'current_item': {},
-            'pihak_kedua': "PT Sarana Trans Bersama Jaya",
-            'pihak_kedua_kode': "STBJ",
-            'pihak_pertama': "",
-            'alamat_pihak_pertama': "",
-            'pihak_ketiga': "",
-            'pihak_ketiga_kode': "",
-            'alamat_pihak_ketiga': "",
-            'ttd_pihak_pertama': "",
-            'jabatan_pihak_pertama': "",
-            # ✅ penanganan nama & jabatan pihak ketiga DIHAPUS
+        
+        # ✅ RESET STATE KE KONDISI AWAL
+        state = {
+            'step': 'mou_pihak_pertama',
+            'data': {
+                'nomor_depan': nomor_depan,
+                'nomor_surat': "",
+                'items_limbah': [],
+                'current_item': {},
+                'pihak_kedua': "PT Sarana Trans Bersama Jaya",
+                'pihak_kedua_kode': "STBJ",
+                'pihak_pertama': "",
+                'alamat_pihak_pertama': "",
+                'pihak_ketiga': "",
+                'pihak_ketiga_kode': "",
+                'alamat_pihak_ketiga': "",
+                'ttd_pihak_pertama': "",
+                'jabatan_pihak_pertama': "",
+            }
         }
         conversations[sid] = state
 
@@ -267,7 +272,6 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
     if state.get('step') == 'mou_jabatan_pihak_pertama':
         state['data']['jabatan_pihak_pertama'] = text.strip()
 
-        # ✅ Penanganan pihak ketiga (nama/jabatan) dihapus -> langsung generate dokumen
         nama_pt_raw = state['data'].get('pihak_pertama', '').strip()
         safe_pt = re.sub(r'[^A-Za-z0-9 \-]+', '', nama_pt_raw).strip()
         safe_pt = re.sub(r'\s+', ' ', safe_pt).strip()
@@ -281,6 +285,7 @@ def handle_mou_flow(data: dict, text: str, lower: str, sid: str, state: dict, co
         docx = create_mou_docx(state['data'], fname_base)
         pdf = create_pdf(fname_base)
 
+        # ✅ RESET conversation state setelah selesai
         conversations[sid] = {'step': 'idle', 'data': {}}
 
         files = [{"type": "docx", "filename": docx, "url": f"/download/{docx}"}]
